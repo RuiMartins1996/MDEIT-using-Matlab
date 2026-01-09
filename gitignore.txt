@@ -1,0 +1,15 @@
+# MATLAB
+*.asv
+*.m~
+*.autosave
+*.slxc
+*.slx.r201*
+*.mex*
+*.fig
+
+# Live scripts
+*.mlx~
+
+# OS
+.DS_Store
+Thumbs.db
