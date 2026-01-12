@@ -56,7 +56,7 @@ models_folder = find_in_parent_folders(script_folder, 'models', 'folder');
 if ~isempty(models_folder)
     addpath(genpath("models"));
 else
-    error('Could not find "models" folder in parent directories.');
+    mkdir('models');
 end
 
 % Run globalParameters.m
