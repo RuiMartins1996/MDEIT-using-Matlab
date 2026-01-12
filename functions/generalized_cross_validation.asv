@@ -98,6 +98,39 @@ elseif strcmp(recon_mode,'eit')
     J = calc_jacobian(imgh);
 end
 
+n = size(J,1);
+
+
+% % Define the V(\lambda) functional
+%     function G_lambda = compute_G(lambda,J)
+%         n_elems = size(J,2);
+%         G_lambda = J*((J'*J+n*lambda*speye(n_elems))\J');
+%     end
+% 
+% G = @(lambda) compute_G(lambda,J);
+% 
+% numerator = @(lambda) (1/n)*norm(data-G(lambda)*data,2)^2;
+% denominator = @(lambda) ((1/n)*trace(speye(size(data,1))-G(lambda)))^2;
+% 
+% V = @(lambda) numerator(lambda)/denominator(lambda);
+% 
+% fprintf('Computing GCV cost function\n');
+% V_lambda = zeros(length(lambda_vector),1);
+% times = [];
+% for i = 1:length(lambda_vector)
+%     fprintf('mu value %i of %i\n',i,length(lambda_vector));
+% 
+%     lambda = lambda_vector(i);
+% 
+%     tic;    
+%     V_lambda(i) = V(lambda); 
+%     times = [times toc];
+% 
+%     time_left = (length(lambda_vector)-i)*mean(times);
+%     fprintf('Time to completion: %.2f (s)\n',floor(time_left*100)/100);
+% end
+
+
 % The GCV function can be computed much faster in terms of the SVD of J
 % without inverting J'*J+n*lambda*speye(n_elems) for every single lambda
 
@@ -119,11 +152,13 @@ for i = 1:n
 
     gamma = sigma.^2 ./ (sigma.^2 + m*lambda);    % shrinkage factors
 
-    one_minus_gamma = 1 - gamma;
+    one_minus = 1 - gamma;
 
-    numerator = (1/m) * sum( (one_minus_gamma .* Uy).^2 );
+    % numerator = (1/m)*sum( (one_minus .* Uy).^2 )
+    numerator = (1/m) * sum( (one_minus .* Uy).^2 );
 
-    denominator = ( (1/m) * sum(one_minus_gamma) )^2;
+    % denominator = ((1/m)*sum(one_minus))^2
+    denominator = ( (1/m) * sum(one_minus) )^2;
 
     V_lambda(i) = numerator / denominator;
 end
@@ -150,14 +185,15 @@ if optimal_id == id_min || optimal_id == id_max
     warning('Not a local minimum!');
 end
 
-mu_min = m*lambda_vector(optimal_id);
+mu_min = n*lambda_vector(optimal_id);
 
 if opts.reconstruct == true
+
     % lhs = J'*J+mu_min*speye(n_elems); rhs = -J'*data;
     
     fprintf('Computing inverse solution for optimal reg. parameter \n');
     dx = -V * ((sigma ./ (sigma.^2 + mu_min)) .* Uy);
-
+    dx = pcg(lhs,rhs,1e-3,50);
 else
     dx = []; % Explicitly set to empty
 end
