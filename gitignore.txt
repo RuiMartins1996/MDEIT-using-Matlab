@@ -5,6 +5,8 @@
 *.slxc
 *.slx.r201*
 *.mex*
+
+# Figures
 *.fig
 *.png
 *.jpg
@@ -16,6 +18,7 @@
 # FOLDERS
 **/data/
 /studies/opm_noise
+**/*eidors*/
 
 # OS
 .DS_Store
