@@ -77,7 +77,7 @@ while true
     % Update residual
     rk = res(xk);
     
-    if rk>rk1
+    if norm(rk,'inf')>norm(rk1,'inf')
         residual = rk1;
         xk = xk-pk;
 
