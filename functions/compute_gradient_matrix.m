@@ -200,8 +200,8 @@ grads = grads_all(2:3,:,:);  % 2 x 3 x n_elem
 % ----------------------------------------
 % Assemble sparse matrices
 % ----------------------------------------
-rows = repelem((1:n_elem)',3);
-cols = reshape(elems', [], 1);
+rows = double(repelem((1:n_elem)',3));
+cols = double(reshape(elems', [], 1));
 
 Gx = sparse(rows, cols, reshape(grads(1,:,:), [], 1), n_elem, n_nodes);
 Gy = sparse(rows, cols, reshape(grads(2,:,:), [], 1), n_elem, n_nodes);
