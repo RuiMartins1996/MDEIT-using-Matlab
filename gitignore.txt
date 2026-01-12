@@ -6,9 +6,16 @@
 *.slx.r201*
 *.mex*
 *.fig
+*.png
+*.jpg
+*.jpeg
 
 # Live scripts
 *.mlx~
+
+# FOLDERS
+**/data/
+/studies/opm_noise
 
 # OS
 .DS_Store
