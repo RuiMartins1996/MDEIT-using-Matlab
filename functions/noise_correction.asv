@@ -1,0 +1,27 @@
+function [outputArg1,outputArg2] = noise_correction(J,lambda,noise_level,num_noise_repetitions)
+
+% Solve Tykhonov regularized normal equations using SVD for noisy inputs
+
+[U,S,V] = svd(J,'econ');
+
+M = zeros(n_elem,num_noise_repetitions);
+
+for t = 1:num_noise_repetitions
+    
+    fprintf('Solving for noise realization %i\n',t);
+
+    data_noisy = noise_level*randn(size(J,1),1);
+    
+    sv = diag(S)+lambda./diag(S);
+    sigma_noisy = V*diag(1./sv)*U'*data_noisy;
+
+    % sigma_eit_noisy_2 = inv_solve(imdl_eit,zeros(size(data_noisy_eit)),data_noisy_eit);
+    % sigma_eit_noisy_2 =  sigma_eit_noisy_2.elem_data; %this approach is the same as above
+
+    M(:,t) = sigma_noisy;
+end
+
+sigma_std = std(M_mdeit,[],2);
+
+end
+
