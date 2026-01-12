@@ -37,11 +37,18 @@ else
 end
 
 %Add libraries folder
-libraries_folder = find_in_parent_folders(script_folder, 'libraries', 'folder');
-if ~isempty(libraries_folder)
-    addpath(genpath(libraries_folder));
+% libraries_folder = find_in_parent_folders(script_folder, 'libraries', 'folder');
+% if ~isempty(libraries_folder)
+%     addpath(genpath(libraries_folder));
+% else
+%     error('Could not find "libraries" folder in parent directories.');
+% end
+
+external_folder = find_in_parent_folders(script_folder, 'external', 'folder');
+if ~isempty(external_folder)
+    addpath(genpath(external_folder));
 else
-    error('Could not find "libraries" folder in parent directories.');
+    error('Could not find "external" folder in parent directories.');
 end
 
 % Set or create model folder
