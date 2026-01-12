@@ -35,7 +35,7 @@ classdef testGNandLM < matlab.unittest.TestCase
             x0 = [0;0];
             tol = 1e-8;
             maxit = 50;
-            RtR = @(x,J) eye(numel(x));       % Identity Tikhonov
+            RtR = @(x,J) x;       % Identity Tikhonov
             lambda = 1e-5;                % GN (no damping)
             M = [];
             
@@ -45,8 +45,6 @@ classdef testGNandLM < matlab.unittest.TestCase
             sol = test_case.test_parameters.sol;
             fprintf('GN solution: [%.1f,%.1f]\n',xk(1),xk(2));
             fprintf('Linsolve solution: [%.1f,%.1f]\n',sol(1),sol(2));
-            rk = res(xk);
-            fprintf('Residual: [%.1f,%.1f,%.1f]\n',rk(1),rk(2),rk(3));
             
             test_case.verifyLessThan(norm(xk - test_case.test_parameters.sol(:)), numel(xk)*tol);
         end
@@ -62,7 +60,7 @@ classdef testGNandLM < matlab.unittest.TestCase
             x0 = [0;0];
             tol = 1e-8;
             maxit = 50;
-            RtR = @(x,J) eye(numel(x));       % Identity Tikhonov
+            RtR = @(x,J) x;       % Identity Tikhonov
             lambda0 = 1e-2;
             M = [];
 
@@ -72,9 +70,6 @@ classdef testGNandLM < matlab.unittest.TestCase
             sol = test_case.test_parameters.sol;
             fprintf('LM solution: [%.1f,%.1f]\n',xk(1),xk(2));
             fprintf('Linsolve solution: [%.1f,%.1f]\n',sol(1),sol(2));
-            rk = res(xk);
-            fprintf('Residual: [%.1f,%.1f,%.1f]\n',rk(1),rk(2),rk(3));
-
 
             test_case.verifyLessThan(norm(xk - test_case.test_parameters.sol(:)), numel(xk)*tol);
 
