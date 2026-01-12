@@ -1,52 +1,62 @@
 clc; clear all; close all;
 
 %% Prepare workspace
-
 % Get the full path of the current script
 fullpath = mfilename('fullpath');
-
 % Extract just the folder
 script_folder = fileparts(fullpath);
+cd(script_folder);
 
-% Set or create data folder
+% Have to add the functions path manually so prepare_workspace runs
+grandparent_folder =fileparts(fileparts(script_folder));
+addpath(genpath(fullfile(grandparent_folder,'functions')));
+
+model_folder = prepare_workspace(script_folder);
+
 data_folder = strcat(script_folder ,'\data');
-if ~exist(data_folder, 'dir')
-    mkdir(data_folder);
-end
-addpath(data_folder);
 
-cd("..\..\");
-
-addpath(genpath("functions"));
-addpath(genpath("libraries"));
-
-% Set or create model folder
-model_folder = './models';
-if ~exist(model_folder, 'dir')
-    mkdir(model_folder);
-end
-addpath(genpath(model_folder));
-
-
-%% Setup EIDORS
-eidors_folder = setupEidors(cd);
 clc;
 
 rng(1)
 
-%% Assign the parameters for several models (should create utility functions for this)
+%% Define the characteristic scales in SI units
 
-SNRdb = 100;
+z0 = 0.0058; %(Ohm m^2) is the contact impedance from the CEM article 58 Ohm cm^2
+l0 = 40e-3; %(m) the tank radius
+I0 = 2.4e-3;%(A) the magnitude of the injected current
+
+% The derived characteristic units
+V0 = z0*I0/(l0^2); %(V)
+sigma0 = l0/z0; %(S/m)
+J0 = I0/(l0^2);
+
+background_conductivity = 3.28e-1/sigma0;
+
+%%  Noise
+SNRdb = 50;
+num_noise_repetitions = 30;
 
 %% Build/load multiple forward models of different sensor radius
+model_parameters = create_default_3d_model_parameters(l0, z0, sigma0, I0);
 
-model_parameters.maxsz = 0.25;
 model_parameters.numOfRings = 4;
-model_parameters.anomaly = struct('type','spherical','conductivity',1.01,'radius',0.3);
 model_parameters.numOfElectrodesPerRing = 4;
-model_parameters.numOfSensors = 16;
-model_parameters.isCylindrical = true;
-model_parameters.sensorRadius = 2.0;
+model_parameters.numOfSensors = 4*4;
+model_parameters.sensorRadius = model_parameters.radius*1.1;
+
+anomaly_conductivity = 5*background_conductivity;
+anomaly_position = [0.3 0 model_parameters.height/2];
+anomaly_radius = 0.3*model_parameters.radius;
+
+model_parameters.material = struct( ...
+    'type', 'spherical', ...
+    'name', 'sphere_anomaly', ...
+    'radius', anomaly_radius, ...
+    'position', anomaly_position);
+model_parameters.anomaly = struct(...
+    'type','spherical',...
+    'conductivity',anomaly_conductivity,...
+    'radius',anomaly_radius);
 
 % Build models
 [model_parameters,fmdl_array] = mk_mdeit_model(model_parameters,model_folder,[]);
@@ -62,7 +72,7 @@ imgh = mk_image_mdeit(fmdl_array{1},1.0);
 data1 = fwd_solve_mdeit(imgh);
 
 % Place anomaly
-imgi = place_anomaly(imgh, model_parameters); 
+imgi = add_material_properties(imgh,[background_conductivity,anomaly_conductivity]);
 data2 = fwd_solve_mdeit(imgi);
 
 figure;
@@ -86,7 +96,7 @@ imdl.select_sensor_axis = 1;
 
 %% Run generalized cross validation ( works for linearized GN ) 
 
-mu_vector = logspace(-15,-3,50);
+mu_vector = logspace(-20,-3,50);
 
 function data_noisy = add_measurement_noise(data,SNRdb)
 assert(isnumeric(data) && isvector(data),'data must be a numerical vector');
@@ -121,8 +131,8 @@ else
     error('here')
 end
 
-
-[mu_min,optimal_id,V_mu,dx] = generalized_cross_validation(imdl,data,mu_vector);
+opts.reconstruct = true;
+[mu_min,optimal_id,V_mu,dx] = generalized_cross_validation(imdl,data,mu_vector,'reconstruct',true);
 
 figure
 img_output = mk_image_mdeit(imdl.fwd_model,1);
@@ -130,7 +140,10 @@ img_output.elem_data = dx;
 show_fem(img_output);
 %% Plots
 figure
+hold on
 plot(mu_vector,V_mu,'b.');
+plot(mu_vector(optimal_id),V_mu(optimal_id),'r.','MarkerSize',15)
+hold off
 set(gca,'YScale','log');
 set(gca,'XScale','log');
 

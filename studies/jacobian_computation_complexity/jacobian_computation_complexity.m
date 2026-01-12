@@ -1,41 +1,21 @@
 clc; clear all; close all;
 
 %% Prepare workspace
-
 % Get the full path of the current script
 fullpath = mfilename('fullpath');
-
 % Extract just the folder
 script_folder = fileparts(fullpath);
-
 cd(script_folder);
 
-% Set or create data folder
+% Have to add the functions path manually so prepare_workspace runs
+grandparent_folder =fileparts(fileparts(script_folder));
+addpath(genpath(fullfile(grandparent_folder,'functions')));
+
+model_folder = prepare_workspace(script_folder);
+
 data_folder = strcat(script_folder ,'\data');
-if ~exist(data_folder, 'dir')
-    mkdir(data_folder);
-end
-addpath(data_folder);
-
-cd("..\..\");
-
-addpath(genpath("functions"));
-addpath(genpath("libraries"));
-
-run("globalParameters.m")
-
-% Set or create model folder
-model_folder = './models';
-if ~exist(model_folder, 'dir')
-    mkdir(model_folder);
-end
-addpath(genpath("models"));
-
-%% Setup EIDORS
-eidors_folder = setupEidors(cd);
 
 clc;
-
 rng(1)
 
 %% Define the characteristic scales in SI units

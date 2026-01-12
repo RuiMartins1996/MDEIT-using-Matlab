@@ -12,7 +12,15 @@ colors = [228,26,28;... %Colors for figure representation
     106,61,154]/255;
 
 %% Fetch data
-s = load('data/data.mat');
+
+ data_file_name=  'data/data_E_4_R_4_M_16.mat';
+
+if isfile(data_file_name)
+    s = load(data_file_name);
+    s = s.s;
+else
+    error('File not found');
+end
 
 r_min = s.r_min;
 r_max = s.r_max;

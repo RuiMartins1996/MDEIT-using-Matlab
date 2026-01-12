@@ -1,40 +1,25 @@
 clc; clear all; close all;
 
 %% Prepare workspace
-
-
 % Get the full path of the current script
 fullpath = mfilename('fullpath');
-
 % Extract just the folder
 script_folder = fileparts(fullpath);
+cd(script_folder);
 
-% Set or create data folder
-data_folder = strcat(script_folder ,'\data');
-if ~exist(data_folder, 'dir')
-    mkdir(data_folder);
-end
-addpath(data_folder);
+% Have to add the functions path manually so prepare_workspace runs
+grandparent_folder =fileparts(fileparts(script_folder));
+addpath(genpath(fullfile(grandparent_folder,'functions')));
 
-cd("..\..\");
+model_folder = prepare_workspace(script_folder);
 
-addpath(genpath("functions"));
-addpath(genpath("libraries"));
-
-% Set or create model folder
-model_folder = './models';
-if ~exist(model_folder, 'dir')
-    mkdir(model_folder);
-end
-addpath(genpath(model_folder));
-
-run("globalParameters.m")
 
 %% Setup EIDORS
-eidors_folder = setupEidors(cd);
 clc;
 
 rng(1)
+
+data_folder = strcat(script_folder ,'\data');
 
 %% Build/load multiple forward models of different sensor radius
 
@@ -94,11 +79,11 @@ end
 
 %% FUNCTIONS
 function file_name = create_file_name(data_folder,model_parameters)
-    name = sprintf('\data_E_%s_R_%s_M_%s',...
+    name = sprintf('data_E_%i_R_%i_M_%i',...
         model_parameters.numOfElectrodesPerRing,...
         model_parameters.numOfRings,...
         model_parameters.numOfSensors);
-    file_name = strcat(data_folder,name);
+    file_name = strcat(data_folder,"\",name);
 end
 
 %% FUNCTIONS

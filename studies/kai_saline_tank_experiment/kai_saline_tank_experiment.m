@@ -1,41 +1,21 @@
 clc; clear all; close all;
 
 %% Prepare workspace
-
 % Get the full path of the current script
 fullpath = mfilename('fullpath');
-
 % Extract just the folder
 script_folder = fileparts(fullpath);
-
 cd(script_folder);
 
-% Set or create data folder
+% Have to add the functions path manually so prepare_workspace runs
+grandparent_folder =fileparts(fileparts(script_folder));
+addpath(genpath(fullfile(grandparent_folder,'functions')));
+
+model_folder = prepare_workspace(script_folder);
+
 data_folder = strcat(script_folder ,'\data');
-if ~exist(data_folder, 'dir')
-    mkdir(data_folder);
-end
-addpath(data_folder);
-
-cd("..\..\");
-
-addpath(genpath("functions"));
-addpath(genpath("libraries"));
-
-run("globalParameters.m")
-
-% Set or create model folder
-model_folder = './models';
-if ~exist(model_folder, 'dir')
-    mkdir(model_folder);
-end
-addpath(genpath("models"));
-
-%% Setup EIDORS
-eidors_folder = setupEidors(cd);
 
 clc;
-
 rng(1)
 
 % PROBLEM:
@@ -625,7 +605,7 @@ imdl_mdeit_1.select_sensor_axis = 3; % z-axis only page 172
 imdl_mdeit_1.fwd_model = fmdl_reconstruction; %Use a different forward model for reconstruction
 imdl_mdeit_1.jacobian_bkgnd = struct('value',background_conductivity);
 imdl_mdeit_1.solver = 'gn';
-imdl_mdeit_1.RtR_prior = @(x,Jx) speye(numel(x)); %tykhonov
+imdl_mdeit_1.RtR_prior = @(x,Jx) x; %tykhonov
 imdl_mdeit_1.recon_type = 'difference';
 
 imdl_mdeit_1.verbose = true; % print debug info
