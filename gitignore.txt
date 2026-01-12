@@ -5,6 +5,7 @@
 *.slxc
 *.slx.r201*
 *.mex*
+*.mat
 
 # Figures
 *.fig
@@ -16,6 +17,8 @@
 *.mlx~
 
 # FOLDERS
+data/**         # all files under any 'data' folder
+**/data/**      # all files under any subfolder named 'data'
 **/data/
 /studies/opm_noise
 **/*eidors*/
