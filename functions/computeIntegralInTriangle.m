@@ -50,7 +50,7 @@ D = [dot(v2-v1,v3-v1)/norm(v2-v1,2);...
 % tri = [v1,v2,v3];
 % fill3(tri(1,:),tri(2,:),tri(3,:),'g');
 
-if abs(D(2))>1e-10 && abs(D(1))>1e-10
+if abs(D(2))>1e-3 && abs(D(1))>1e-3
 
     A = [norm(v3-v1,2)^2;...
         norm(v3-v2,2)^2];
@@ -64,8 +64,21 @@ if abs(D(2))>1e-10 && abs(D(1))>1e-10
     E = - [dot(v2-v1,r-v1)/norm(v2-v1);...
         dot(v2-v1,r-v2)/norm(v2-v1)];
     
-    R = @(eta) sqrt(A*eta^2+B*eta+C);
-
+    R = @(eta) sqrt(A.*eta^2+B.*eta+C);
+    
+    % These become huge numbers when the problematic elements are being
+    % computed, why? It's because D(1) is very close to zero, but still
+    % bigger than 1e-10. This happens because dot(v2-v1,v3-v1) =
+    % -1.4618e-08, which means it's an almost perpendicular triangle. It
+    % makes sense to relax to this condition abs(D(2))>1e-3 &&
+    % abs(D(1))>1e-3, since even for a very i'll conditioned right
+    % triangle. Assume there is an angle which is very close to 90 and is problematic.
+    % Assuming that the triangles are not ill-conditioned, since
+    % the meshing takes care of those, then the other angles will be
+    % considerably different than 90. So it's okay to test the condition
+    % for 1e-3 rather than for 1e-10. Maybe we should test directly
+    % dot(v2-v1,v3-v1) and dot(v2-v1,v3-v2)???????
+    
     a = A./(D.^2);
 
     b = (B.*D-2*A.*E)./(D.^2);
