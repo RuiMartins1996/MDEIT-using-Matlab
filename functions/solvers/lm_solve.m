@@ -4,7 +4,8 @@ function [xk,num_of_iterations,pcg_iterations,residual,exit_flag] = ...
 % METHODS FOR NON-LINEAR LEAST SQUARES PROBLEMS, K.Madsen,H.B.Nielsen,O.Tingleff
 
 nu = 2;
-max_num_of_failed_steps = max(1,floor(max_iterations/4));
+% max_num_of_failed_steps = max(1,floor(max_iterations/4));
+max_num_of_failed_steps = 20;
 min_num_of_steps = max(1,floor(max_iterations/4));
 
 f = @(x) func(x,res);
@@ -45,14 +46,14 @@ gk = jk'*rk;        %avoid calling function grad_func to not recompute res(xk) a
 num_of_iterations = 0;
 pcg_iterations = [];
 
-% Exit imediatly if convergence criterion is satisfied
-if norm(gk,'inf')<tol
-    residual = rk;
-    exit_flag = 3;
-    fprintf('Critical point at ||g|| =  %.2g\n',norm(gk));
-    fprintf('LM time: %.2f\n', toc);
-    return;
-end
+% % Exit imediatly if convergence criterion is satisfied
+% if norm(gk,'inf')<tol
+%     residual = rk;
+%     exit_flag = 3;
+%     fprintf('Critical point at ||g|| =  %.2g\n',norm(gk));
+%     fprintf('LM time: %.2f\n', toc);
+%     return;
+% end
 
 num_of_failed_steps = 0;
 
