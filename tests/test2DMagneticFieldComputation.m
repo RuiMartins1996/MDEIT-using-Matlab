@@ -21,20 +21,16 @@ classdef test2DMagneticFieldComputation < matlab.unittest.TestCase
         function test2DConductivePlate(test_case)
             %% Prepare workspace
             % Get the full path of the current script
-            full_path = mfilename('fullpath');
-
+            fullpath = mfilename('fullpath');
             % Extract just the folder
-            script_folder = fileparts(full_path);
+            script_folder = fileparts(fullpath);
+            cd(script_folder);
 
-            % Move one level up
-            parent_folder = fileparts(script_folder);      % One level above
-            disp(parent_folder)
-            cd(parent_folder);                       % Change directory to that folder
+            % Have to add the functions path manually so prepare_workspace runs
+            parent_folder =fileparts(script_folder);
+            addpath(genpath(fullfile(parent_folder,'functions')));
 
-            addpath(genpath("functions"));
-            addpath(genpath("libraries"));
-            %% Setup EIDORS
-            eidors_folder = setupEidors(cd);
+            prepare_workspace(script_folder);
 
             %% Create a square conductive plaque
             sz = 1.0;           % size
