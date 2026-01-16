@@ -30,14 +30,15 @@ gk = jk'*rk;        %avoid calling function grad_func to not recompute res(xk) a
 num_of_iterations = 0;
 pcg_iterations = [];
 
-% Exit imediatly if convergence criterion is satisfied
-if norm(gk,'inf')<tol
-    residual = rk;
-    exit_flag = 3;
-    fprintf('Critical point at ||g|| =  %.2g\n',norm(gk));
-    fprintf('GN time: %.2f\n', toc);
-    return;
-end
+% % Exit imediatly if convergence criterion is satisfied
+% if norm(gk,'inf')<tol
+%     residual = rk;
+%     exit_flag = 3;
+%     warning('Exited before any iteration! ||gk|| < e already')
+%     fprintf('Critical point at ||g|| =  %.2g\n',norm(gk));
+%     fprintf('GN time: %.2f\n', toc);
+%     return;
+% end
 
 if verbose
 report_diagonostic_info(0,norm(rk,2),norm(jac(x0)'*rk))
