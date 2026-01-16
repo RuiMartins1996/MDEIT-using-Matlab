@@ -21,7 +21,7 @@ rng(1)
 
 %% Experiment parameters
 
-num_of_repetitions = 3;
+num_of_repetitions = 1;
 tolerances = 10.^(-4:-1:-7);
 
 %% Define the characteristic scales in SI units
@@ -188,7 +188,7 @@ imdl_mdeit_1.jacobian_bkgnd = struct('value',background_conductivity);
 imdl_mdeit_1.solver = 'lm';
 imdl_mdeit_1.recon_type = 'absolute';
 imdl_mdeit_1.hyperparameter.value = 1e-1;
-imdl_mdeit_1.max_iterations = 3;
+imdl_mdeit_1.max_iterations = 10;
 imdl_mdeit_1.x0 = background_conductivity*ones(size(fmdl_reconstruction.elems,1),1);
 
 
