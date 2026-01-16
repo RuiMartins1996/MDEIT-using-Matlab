@@ -17,9 +17,7 @@
 *.mlx~
 
 # FOLDERS
-data/**         # all files under any 'data' folder
-**/data/**      # all files under any subfolder named 'data'
-**/data/
+**/data/**
 /studies/opm_noise
 **/*eidors*/
 
