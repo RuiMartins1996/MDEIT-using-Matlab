@@ -55,11 +55,11 @@ while true
 
     % Solve Afun * p = b (use pcg with optional preconditioner M)
     if isempty(M)
-        [pk,flag,relres,iter] = pcg(Afun, b, tol, numel(x0));
+        [pk,flag,relres,iter] = pcg(Afun, b, tol, max(numel(x0),1e3));
         pcg_iterations(num_of_iterations+1) = iter;
 
     else
-        [pk,flag,relres,iter] = pcg(Afun, b, tol, numel(x0), M);
+        [pk,flag,relres,iter] = pcg(Afun, b, tol, max(numel(x0),1e3), M);
         pcg_iterations(num_of_iterations+1) = iter;
     end
     
