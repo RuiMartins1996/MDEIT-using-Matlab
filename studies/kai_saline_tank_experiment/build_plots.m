@@ -1,26 +1,25 @@
-clc; clear all; close all;
-%% Prepare workspace
+
+clc;clear all;close all;
+
+colors = [228,26,28;... %Colors for figure representation
+    55,126,184;...
+    77,175,74;...
+    152,78,163;...
+    255,127,0;...
+    255,255,51;...
+    166,86,40;...
+    247,129,191;
+    202,178,214;
+    106,61,154]/255;
+
 
 % Get the full path of the current script
 fullpath = mfilename('fullpath');
-
 % Extract just the folder
 script_folder = fileparts(fullpath);
-
 cd(script_folder);
 
-cd("..\..\");
-
-addpath(genpath("functions"));
-addpath(genpath("libraries"));
-
-run("globalParameters.m")
-
-%Setup EIDORS
-eidors_folder = setupEidors(cd);
-
-cd(script_folder);
-
+model_folder = prepare_workspace(script_folder);
 %% Load data
 
 data_folder = 'data/anomaly_position_0';
