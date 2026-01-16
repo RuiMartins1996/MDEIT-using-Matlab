@@ -1,4 +1,4 @@
-function s = l_curve_method(imgh,imgi,recon_mode,lambda_vec)
+function s = l_curve_method(fmdl_reconstruction,imgh,imgi,recon_mode,lambda_vec)
 
 valid_modes = {'eit', 'mdeit1', 'mdeit3'};
 if ~ismember(recon_mode, valid_modes)
@@ -41,25 +41,27 @@ elseif strcmp(recon_mode,'eit')
     error('Not implemented yet')
 end
 
-% Define residual ||J(sigma_0)*Delta_sigma - y||_2
-lambdatimesdAdp = @(x) computeLambdaTimesDaDp(imgi,x);
-A = @(x) M(imgi,x);
+img_reconstruction = mk_image_mdeit(fmdl_reconstruction,(max(imgh.elem_data)));
 
-jac = @(x) calc_jacobian_mdeit(imgi,x,lambdatimesdAdp,A,recon_mode,select_sensor_axis);
-J = jac(imgh.elem_data);
+% Define residual ||J(sigma_0)*Delta_sigma - y||_2
+lambdatimesdAdp = @(x) computeLambdaTimesDaDp(img_reconstruction,x);
+A = @(x) M(img_reconstruction,x);
+
+jac = @(x) calc_jacobian_mdeit(img_reconstruction,x,lambdatimesdAdp,A,recon_mode,select_sensor_axis);
+J = jac(img_reconstruction.elem_data);
 
 res = @(x,y) norm(J*x-y,2); 
 
 % Make inverse model
 imdl= eidors_obj('inv_model','my_inverse_model');
 
-imdl.fwd_model = imgi.fwd_model;
+imdl.fwd_model = fmdl_reconstruction;
 imdl.jacobian_bkgnd = struct('value',1.0);
 imdl.solve = @eidors_default;
-imdl.RtR_prior = @(x,Jx) speye(numel(x));
-imdl.max_iterations = 1;
+imdl.RtR_prior = @(x,Jx) x;
 imdl.recon_mode = recon_mode;
-
+imdl.recon_type = "difference";
+imdl.jacobian_bkgnd = struct('value',max(imgh.elem_data));
 
 for i = 1:length(lambda_vec)
     
@@ -69,6 +71,10 @@ for i = 1:length(lambda_vec)
     data_diff = datai-datah;
     d_sigma = img_output.elem_data;
     
+    figure('Name',strcat(recon_mode,'| lambda = ',num2str(lambda_vec(i))));
+    show_fem(img_output);
+    pause(1e-10)
+
     residual_norms(i) = res(d_sigma,data_diff);
     x_norms(i) = norm(img_output.elem_data,2);
 end
