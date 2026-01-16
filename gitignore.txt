@@ -17,7 +17,7 @@
 *.mlx~
 
 # FOLDERS
-**/data/**
+**/data*/ #Ignore any folder whose name starts with data
 /studies/opm_noise
 **/*eidors*/
 
