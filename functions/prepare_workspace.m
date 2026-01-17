@@ -45,8 +45,21 @@ end
 % end
 
 external_folder = find_in_parent_folders(script_folder, 'external', 'folder');
+external_libs = dir(external_folder);
+external_libs = external_libs(~matches({external_libs.name},[".",".."]),:);
+
 if ~isempty(external_folder)
-    addpath(genpath(external_folder));
+    addpath(external_folder);
+    
+    for i = 1:numel(external_libs)
+        if ~matches(external_libs(i).name,["spm","spm12"])
+            addpath(genpath(...
+                fullfile(external_folder,external_libs(i).name)));
+        else %spm12 needs to be added without genpath
+            addpath(...
+                fullfile(external_folder,external_libs(i).name));
+        end
+    end
 else
     error('Could not find "external" folder in parent directories.');
 end
