@@ -10,121 +10,180 @@ classdef testRMatrices < matlab.unittest.TestCase
 
     methods(TestMethodSetup)
         function setup(testCase)
-
-            % Prepare workspace
-            cd("C:\Users\RuiMartins\Desktop\SVD Comparison");
-            addpath(genpath("functions"));
-            addpath(genpath("libraries"));
-
-            % Setup EIDORS
-            eidorsFolder = setupEidors(cd);
-            clc;
-
-            run("globalParameters.m")
-
-            rng(1);
-
-            % Define test parameters
-
-            % The sensor position
-            testCase.testParameters.rm = [0 0 5];
+            %% Define test parameters
 
             % Current density vector
             testCase.testParameters.J = [1 1 1];
 
             % Error threshold
-            testCase.testParameters.errorThresh = 1e-1;
+            testCase.testParameters.errorThresh = 0.5e-1;
         end
     end
 
     methods(Test)
         function testExactExpressionForRMatrices(testCase)
+             %% Prepare workspace
+            % Get the full path of the current script
+            fullpath = mfilename('fullpath');
+            % Extract just the folder
+            script_folder = fileparts(fullpath);
+            cd(script_folder);
 
-            %Extract Parameters
+            % Have to add the functions path manually so prepare_workspace runs
+            parent_folder =fileparts(script_folder);
+            addpath(genpath(fullfile(parent_folder,'functions')));
+
+            model_folder = prepare_workspace(script_folder);
+
+            rng(1);
+
+            %% Extract Parameters
             errorThresh = testCase.testParameters.errorThresh;
+            
+            %% Model parameters
+            z0 = 0.0058; %(Ohm m^2) is the contact impedance from the CEM article 58 Ohm cm^2
+            l0 = 40e-3; %(m) the tank radius
+            I0 = 2.4e-3;%(A) the magnitude of the injected current
 
-            height = 1;
-            radius = 1;
-            maxsz = 0.5;
-            numOfElectrodesPerRing = 3;
-            numOfRings = 2;
+            % The derived characteristic units
+            V0 = z0*I0/(l0^2); %(V)
+            sigma0 = l0/z0; %(S/m)
+            J0 = I0/(l0^2);
+            
+            model_parameters = create_default_3d_model_parameters(l0, z0, sigma0, I0);
+            
+            model_parameters.maxsz = max(model_parameters.height,model_parameters.radius)*0.05;
+            model_parameters.numOfElectrodesPerRing = 4;
+            model_parameters.numOfSensors = 4;
+            model_parameters.sensorRadius = model_parameters.radius*2;
 
-            numOfSensors = 10;
-            R = 5;
+            %% Make forward model
 
-            % Assemble forward model
-            dh = height/(numOfRings+1);
-            ring_vert_pos = dh:dh:height-dh;
+            [~,fmdls] = mk_mdeit_model(model_parameters,model_folder);
+            
+            fmdl = fmdls{1};
 
-            %Create  forward model
-            fmdl= ng_mk_cyl_models(...
-                [height,radius,maxsz],[numOfElectrodesPerRing,ring_vert_pos],[0.2,0.2,maxsz]);
-
-            options{1} = numOfSensors;
-            options{2} = R;
-            options{3} = sum(fmdl.nodes,1)/length(fmdl.nodes);
-            sensorLocations = placeMagnetometers(options,'spherical');
-            clc;
-
+            sensorLocations = zeros(numel(fmdl.sensors),3);
+            for i = 1: numel(fmdl.sensors)
+                sensorLocations(i,:) = fmdl.sensors(i).position;
+            end
+            
             fprintf("Test Parameters: \n"+ ...
                 "Error threshold: %g (%%)\n",testCase.testParameters.errorThresh);
-
-            %test
-            [Rx,Ry,Rz] = testRMatrices.computeRmatricesNewtonCotes1(fmdl,sensorLocations);
-
-
-            % Compute R matrices with two methods
-            [Gx,Gy,Gz,V,elementCentroids] = computeGradientMatrix(fmdl);
-            [RxCentroid,RyCentroid,RzCentroid] = computeRmatrices(fmdl,elementCentroids,sensorLocations);
-
-            [RxAnalytic,RyAnalytic,RzAnalytic] = computeRmatricesGeneralized(fmdl,sensorLocations);
-
-            % The result of this one should be the same as the centroid quadrature
-            [RxKeast0,RyKeast0,RzKeast0] = testRMatrices.computeRmatricesKeast0(fmdl,sensorLocations);
-
+            
+            %% Compute R matrices with numerical method
             [RxNewtonCotes4,RyNewtonCotes4,RzNewtonCotes4] = testRMatrices.computeRmatricesNewtonCotes4(fmdl,sensorLocations);
 
-            [RxNewtonCotes2,RyNewtonCotes2,RzNewtonCotes2] = testRMatrices.computeRmatricesNewtonCotes2(fmdl,sensorLocations);
+            %% Compute R matrices with analytic method
+            numElements = size(fmdl.elems,1);
+            numSensors = size(sensorLocations,1);
 
-            % DONT FORGET TO CORRECT FOR VOLUME, BECAUSE THE FIRST FUNCTION IS STILL
-            % INCLUDING VOLUME IN THE DEFINITION OF R
-            errors = zeros(1,length(V));
-            for k = 1:length(V)
-                RxCentroid(:,k) = RxCentroid(:,k)*V(k);
-                RyCentroid(:,k) = RyCentroid(:,k)*V(k);
-                RzCentroid(:,k) = RzCentroid(:,k)*V(k);
+            Rx = zeros(numSensors,numElements);
+            Ry = zeros(numSensors,numElements);
+            Rz = zeros(numSensors,numElements);
+            
+            figure;
+            hold on;
+            show_fem(fmdl);
+            plot_sensors(fmdl);
+            hold on
 
-                errors(k) = norm(RxAnalytic(:,k)-RxCentroid(:,k));
+            countx = 0;
+            county = 0;
+            countz = 0;
+
+            % It seems that elements 3737,3741 are the problem for these
+            % situation
+
+            elements_x = [];
+            elements_y = [];
+            elements_z = [];
+
+            for m = 1:numSensors
+                sensorCenter = [sensorLocations(m,1),sensorLocations(m,2),sensorLocations(m,3)];
+                plot3(sensorCenter(1),sensorCenter(2),sensorCenter(3),'r.','MarkerSize',10);
+                for k = 1:numElements
+                    
+                    element_ids = fmdl.elems(k,:);
+
+                    vertices = fmdl.nodes(element_ids,:);
+                    
+                    [L,n] = computeIntegralAndNormalsInTetrahedron(vertices,sensorCenter);
+
+                    S = zeros(3,1);
+                    for j = 1:4
+                        S = S + L(j)*n(:,j);
+                    end
+
+                    Rx(m,k) = dot(S,[1,0,0]);
+                    Ry(m,k) = dot(S,[0,1,0]);
+                    Rz(m,k) = dot(S,[0,0,1]);
+
+                    % Stop whenever difference between analytical and
+                    % numerical is too great ( problem must be in the
+                    % analytical computaiton!, not the numerical!)
+            
+                    if abs(Rx(m,k)-RxNewtonCotes4(m,k))/abs(Rx(m,k))*100>1
+                        patch('Vertices', vertices, 'Faces', [1 2 3;1 2 4;2 3 4;1 3 4], ...
+                            'FaceColor', 'cyan', 'FaceAlpha', 0.5, 'EdgeColor', 'black');
+                        axis equal
+                        xlabel('X'); ylabel('Y'); zlabel('Z');
+                        view(3)
+                        grid on
+
+                        countx = countx+1;
+                        elements_x  = unique([elements_x,k]);
+                    end
+
+                    if abs(Ry(m,k)-RyNewtonCotes4(m,k))/abs(Ry(m,k))*100>1
+                        patch('Vertices', vertices, 'Faces', [1 2 3;1 2 4;2 3 4;1 3 4], ...
+                            'FaceColor', 'yellow', 'FaceAlpha', 0.5, 'EdgeColor', 'black');
+                        axis equal
+                        xlabel('X'); ylabel('Y'); zlabel('Z');
+                        view(3)
+                        grid on
+
+                        county = county+1;
+                        elements_y  = unique([elements_y,k]);
+                    end
+
+                    if abs(Rz(m,k)-RzNewtonCotes4(m,k))/abs(Rz(m,k))*100>1
+                        patch('Vertices', vertices, 'Faces', [1 2 3;1 2 4;2 3 4;1 3 4], ...
+                            'FaceColor', 'magenta', 'FaceAlpha', 0.5, 'EdgeColor', 'black');
+                        axis equal
+                        xlabel('X'); ylabel('Y'); zlabel('Z');
+                        view(3)
+                        grid on
+
+                        countz = countz+1;
+                        elements_z  = unique([elements_z,k]);
+                    end
+
+                end
+
             end
+            
 
-            errorsKeast0Rx = abs(RxAnalytic-RxKeast0)./abs(RxAnalytic)*100;
-            errorsKeast0Rx = errorsKeast0Rx(:);
-
-            errorsKeast0Ry = abs(RyAnalytic-RyKeast0)./abs(RyAnalytic)*100;
-            errorsKeast0Ry = errorsKeast0Ry(:);
-
-            errorsKeast0Rz = abs(RzAnalytic-RzKeast0)./abs(RzAnalytic)*100;
-            errorsKeast0Rz = errorsKeast0Rz(:);
-
-
-            errorsNewtonCotes2Rx = abs(RxAnalytic-RxNewtonCotes2)./abs(RxAnalytic)*100;
-            errorsNewtonCotes2Rx = errorsNewtonCotes2Rx(:);
-
-            errorsNewtonCotes2Ry = abs(RyAnalytic-RyNewtonCotes2)./abs(RyAnalytic)*100;
-            errorsNewtonCotes2Ry = errorsNewtonCotes2Ry(:);
-
-            errorsNewtonCotes2Rz = abs(RzAnalytic-RzNewtonCotes2)./abs(RzAnalytic)*100;
-            errorsNewtonCotes2Rz = errorsNewtonCotes2Rz(:);
-
-
-            errorsNewtonCotes4Rx = abs(RxAnalytic-RxNewtonCotes4)./abs(RxAnalytic)*100;
+            errorsNewtonCotes4Rx = abs(Rx-RxNewtonCotes4)./abs(Rx)*100;
             errorsNewtonCotes4Rx = errorsNewtonCotes4Rx(:);
 
-            errorsNewtonCotes4Ry = abs(RyAnalytic-RyNewtonCotes4)./abs(RyAnalytic)*100;
+            errorsNewtonCotes4Ry = abs(Ry-RyNewtonCotes4)./abs(Ry)*100;
             errorsNewtonCotes4Ry = errorsNewtonCotes4Ry(:);
 
-            errorsNewtonCotes4Rz = abs(RzAnalytic-RzNewtonCotes4)./abs(RzAnalytic)*100;
+            errorsNewtonCotes4Rz = abs(Rz-RzNewtonCotes4)./abs(Rz)*100;
             errorsNewtonCotes4Rz = errorsNewtonCotes4Rz(:);
+
+            % figure;
+            % 
+            % hold on
+            % plot(errorsNewtonCotes4Rx)
+            % plot(errorsNewtonCotes4Ry)
+            % plot(errorsNewtonCotes4Rz)
+            % hold off;
+            % 
+            % legend('x','y','z')
+            % 
+            % ylim([0,1]);
 
             %% Test
 
@@ -143,23 +202,17 @@ classdef testRMatrices < matlab.unittest.TestCase
 
             fprintf('%-15s\n','Rx:');
             fprintf('%-15s%-15s%-25s%-10s\n','Quadrature', 'Mean (%)', 'Standard Deviation (%)','Maximum (%)');
-            fprintf('%-15s%-15.9g%-25.9g%-10.9g\n','Keast0',mean(errorsKeast0Rx),std(errorsKeast0Rx),max(errorsKeast0Rx));
-            fprintf('%-15s%-15.9g%-25.9g%-10.9g\n','NewtonCotes4',mean(errorsNewtonCotes2Rx),std(errorsNewtonCotes2Rx),max(errorsNewtonCotes2Rx));
             fprintf('%-15s%-15.9g%-25.9g%-10.9g\n','NewtonCotes35',mean(errorsNewtonCotes4Rx),std(errorsNewtonCotes4Rx),max(errorsNewtonCotes4Rx));
 
             fprintf('%s\n', repmat('-', 1, 30));
 
             fprintf('%-15s\n','Ry:');
             fprintf('%-15s%-15s%-25s%-10s\n','Quadrature', 'Mean (%)', 'Standard Deviation (%)','Maximum (%)');
-            fprintf('%-15s%-15.9g%-25.9g%-10.9g\n','Keast0',mean(errorsKeast0Ry),std(errorsKeast0Ry),max(errorsKeast0Ry));
-            fprintf('%-15s%-15.9g%-25.9g%-10.9g\n','NewtonCotes4',mean(errorsNewtonCotes2Ry),std(errorsNewtonCotes2Ry),max(errorsNewtonCotes2Ry));
             fprintf('%-15s%-15.9g%-25.9g%-10.9g\n','NewtonCotes35',mean(errorsNewtonCotes4Ry),std(errorsNewtonCotes4Ry),max(errorsNewtonCotes4Ry));
             fprintf('%s\n', repmat('-', 1, 30));
 
             fprintf('%-15s\n','Rz:');
             fprintf('%-15s%-15s%-25s%-10s\n','Quadrature', 'Mean (%)', 'Standard Deviation (%)','Maximum (%)');
-            fprintf('%-15s%-15.9g%-25.9g%-10.9g\n','Keast0',mean(errorsKeast0Rz),std(errorsKeast0Rz),max(errorsKeast0Rz));
-            fprintf('%-15s%-15.9g%-25.9g%-10.9g\n','NewtonCotes4',mean(errorsNewtonCotes2Rz),std(errorsNewtonCotes2Rz),max(errorsNewtonCotes2Rz));
             fprintf('%-15s%-15.9g%-25.9g%-10.9g\n','NewtonCotes35',mean(errorsNewtonCotes4Rz),std(errorsNewtonCotes4Rz),max(errorsNewtonCotes4Rz));
             fprintf('%s\n', repmat('-', 1, 30));
 
