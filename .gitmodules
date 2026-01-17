@@ -1,6 +1,3 @@
 [submodule "external/S2-Sampling-Toolbox"]
 	path = external/S2-Sampling-Toolbox
 	url = https://github.com/AntonSemechko/S2-Sampling-Toolbox.git
-[submodule "external/spm12"]
-	path = external/spm12
-	url = https://github.com/spm/spm.git
