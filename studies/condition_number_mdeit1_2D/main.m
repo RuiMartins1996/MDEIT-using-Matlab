@@ -13,12 +13,6 @@ addpath(genpath(fullfile(grandparent_folder,'functions')));
 
 model_folder = prepare_workspace(script_folder);
 
-
-%% Setup EIDORS
-eidors_folder = setupEidors(cd);
-
-clc;
-
 rng(1)
 %% Define the characteristic scales in SI units
 
