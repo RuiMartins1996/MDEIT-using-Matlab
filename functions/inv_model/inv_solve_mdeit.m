@@ -252,6 +252,7 @@ end
 if isfield(imdl, 'hyperparameter')
     lambda = imdl.hyperparameter.value;
 else %default
+    warning('Using default hyperparameter')
     lambda = 1e-7;
 end
 

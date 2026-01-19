@@ -122,6 +122,8 @@ if not(exist(model_name, 'file') == 2) || opts.recompute == true
     %% Compute geometry matrices
     mu0 = model_parameters.mu0;
 
+    fmdl.mu0 = mu0;
+
     if opts.no_geometry_matrices == true
         fprintf('Skipping computation of geometry matrices \n');
     else
@@ -137,12 +139,36 @@ if not(exist(model_name, 'file') == 2) || opts.recompute == true
     %% Save into file
     if ~isempty(model_name)
         save(model_name,'fmdl');
-    end
-
-    %% If this file already exists, load it
-else
+    end 
+else %If this file already exists, load it
     var = load(model_name);
     fmdl = var.fmdl;
+    
+    % Check if fmdl fields are the expected ones according to what was
+    % requested in opts
+    need_field_R = ~opts.no_geometry_matrices;
+    has_field_R = isfield(fmdl,'R');
+
+    need_field_sensors = ~opts.no_magnetometers;
+    has_field_sensors = isfield(fmdl,'sensors');
+
+    if (need_field_R && ~has_field_R || need_field_sensors && ~has_field_sensors)
+        opts.recompute = true;
+        [~,fmdl] = ...
+            mk_mdeit_model_single_modelParameters(model_parameters,model_folder,opts);
+    else 
+        %okay
+    end
+    
+    % Remove unwanted fields
+    if opts.no_magnetometers && has_field_sensors
+        fmdl = rmfield(fmdl, 'sensors');
+    end
+
+    if opts.no_geometry_matrices && has_field_R
+        fmdl = rmfield(fmdl, 'R');
+    end
+    
     model_parameters = file_name_to_model_parameters(model_name,model_folder);
 end
 
