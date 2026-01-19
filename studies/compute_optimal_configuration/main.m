@@ -664,7 +664,8 @@ end
 
 %% Function
 function cost = compute_cost(condition_number,r,rmin,rmax)
-    cost = log10(condition_number(:)) + (r(:)-rmin).^2/(rmax-rmin)^2;
+    max_log_condition_number = max(log10(condition_number(:)));
+    cost = log10(condition_number(:)) + max_log_condition_number*sqrt((r(:)-rmin).^2/(rmax-rmin)^2);
 end
 
 %% Function
