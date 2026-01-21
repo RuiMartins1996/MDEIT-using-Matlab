@@ -19,7 +19,7 @@ hash_mapping(short_hash_str) = hash_str;
 save(mapping_file, 'hash_mapping');
 
 file_name = strcat(...
-    strcat(model_folder,'/model_',short_hash_str,'.mat'));
+    strcat(model_folder,'\model_',short_hash_str,'.mat'));
 
 % Sanity check
 S = decodeModelParameters(hash_str);

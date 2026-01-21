@@ -103,7 +103,7 @@ opts = optimoptions('particleswarm', ...
     'Display','iter', ...
     'UseParallel', true, ...
     'SwarmSize', 10, ...        % tuneable
-    'MaxIterations', 2);      % tuneable
+    'MaxIterations', 10);      % tuneable
 
 
 condition_number_at_x0 = compute_jacobian_mdeit1_condition_number_v2(imgh,sensor_locations_vector_0);
@@ -198,7 +198,7 @@ opts = optimoptions('particleswarm', ...
     'Display','iter', ...
     'UseParallel', true, ...
     'SwarmSize', 20, ...        % tuneable
-    'MaxIterations', 2);      % tuneable
+    'MaxIterations', 20);      % tuneable
 
 lb = -rmax*ones(length(sensor_locations_vector_0),1);
 ub =  rmax*ones(length(sensor_locations_vector_0),1);
@@ -569,6 +569,7 @@ for i = 1:length(SNR_vector)
     img_outputs = [];
     sigma_stds = [];
     figure_names = [];
+    condition_numbers = [];
 
     % Data for default model
     if exist("fmdl_reconstruction_r_0",'var')
@@ -610,6 +611,7 @@ for i = 1:length(SNR_vector)
         sigma_stds = [sigma_stds {sigma_std_mdeit_r_0}];
         img_outputs = [img_outputs img_output_mdeit_r_0];
         figure_names = [figure_names,"r\_0"];
+        condition_numbers = [condition_numbers condition_number_at_x0];
     end
 
     % Data for r_pswarm model
@@ -637,6 +639,7 @@ for i = 1:length(SNR_vector)
 
         img_outputs = [img_outputs img_output_mdeit_r_pswarm];
         figure_names = [figure_names,"r\_pswarm"];
+        condition_numbers = [condition_numbers condition_number_at_r_pswarm];
     end
 
     % Data for r_fminbnd model
@@ -664,6 +667,7 @@ for i = 1:length(SNR_vector)
 
         img_outputs = [img_outputs img_output_mdeit_r_fminbnd];
         figure_names = [figure_names,"r\_fminbnd"];
+        condition_numbers = [condition_numbers condition_number_at_r_fminbnd];
     end
 
     % Data for x_pswarm model
@@ -691,6 +695,8 @@ for i = 1:length(SNR_vector)
 
         img_outputs = [img_outputs img_output_mdeit_x_pswarm];
         figure_names = [figure_names,"x\_pswarm"];
+        
+        condition_numbers = [condition_numbers condition_number_at_x_pswarm];
     end
     
     %% Plots 
@@ -721,9 +727,10 @@ for i = 1:length(SNR_vector)
         show_slices(img_temp,[inf,inf,1.5])
         plot(x, y, 'r--', 'LineWidth', 0.5)
         hold off;
-
-        this_title = strcat(figure_names(n));
-        title(this_title);
+        
+        condition_number = condition_numbers(n);
+        this_title = strcat(figure_names(n),', $\log(\kappa) =',num2str(log10(condition_number)),'$');
+        title(this_title,'Interpreter','latex');
         box on;grid on;grid minor;
         
         subplot(4,n_plots+1,n+n_plots+1)
@@ -764,7 +771,7 @@ for i = 1:length(SNR_vector)
     plot(x, y, 'r--', 'LineWidth', 0.5)
     hold off;
 
-    title('eit');
+    title('eit','Interpreter','latex');
     box on;grid on;grid minor;
 
     subplot(4,n_plots+1,n+n_plots+1)
