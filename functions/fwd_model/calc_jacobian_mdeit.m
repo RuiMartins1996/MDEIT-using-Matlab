@@ -27,7 +27,41 @@ end
 if strcmp(recon_mode,'mdeit1')
     % This approach is faster!
     % J = calc_jacobian_1axis_direct(img,x,lambdatimesdAdp,A,select_sensor_axis,verbose);
+
+    % v = ones(length(x),1);
+    % 
+    % w = ones(numel(img.fwd_model.electrode)*numel(img.fwd_model.sensors),1);
+    % 
+    % z = vec_jacobian_product_v2(img, x, A, w, select_sensor_axis, verbose);
+
     J = calc_jacobian_1axis_direct_fully_vectorized(img,x,A,select_sensor_axis,verbose);
+    
+    % Jv1 = J*v;
+    % y = jacobian_vec_product_v2(img, x, A, v, select_sensor_axis, verbose);
+    % 
+    % if norm(Jv1-y,2)>1e-14
+    %     error('hEre');
+    % end
+    % 
+    % for t = 1:20
+    %     disp(t)
+    %     tic
+    %     J = calc_jacobian_1axis_direct_fully_vectorized(img,x,A,select_sensor_axis,verbose);
+    %     Jv1 = J*v;
+    %     times_1(t) = toc;
+    % end
+    % 
+    % for t = 1:20
+    %     disp(t)
+    %     tic
+    %     y = jacobian_vec_product_v2(img, x, A, v, select_sensor_axis, verbose);
+    %     times_2(t) = toc;
+    % end
+    % 
+    % fprintf('time = %2.2f +/- %2.2f\n',mean(times_1),std(times_1));
+    % fprintf('time = %2.2f +/- %2.2f\n',mean(times_2),std(times_2));
+    % 
+    % disp('End');
 
 elseif strcmp(recon_mode,'mdeit3')
     J = calc_jacobian_3axis_direct(img,x,lambdatimesdAdp,A,verbose);
@@ -160,7 +194,7 @@ for m = 1:numSensors
         Gx_times_lambda(:,m).*Gx_times_u + ...
         Gy_times_lambda(:,m).*Gy_times_u + ...
         Gz_times_lambda(:,m).*Gz_times_u );
-    
+
     switch select_sensor_axis
         case 1
             dfdp_m = mu_factor*(...
@@ -254,10 +288,10 @@ Nfun = @(x) x ./ d;              % right preconditioner
 
 GammaT = Gamma.';
 
-% Incomplete Cholesky factorization preconditioner seems to be a bit faster 
+% Incomplete Cholesky factorization preconditioner seems to be a bit faster
 % than Jacobi preconditioner. However, it breaks down when the
 % conductivities become negative
-% R = ichol(A_matrix);  
+% R = ichol(A_matrix);
 % Rt = R';
 
 parfor m = 1:numSensors
@@ -284,7 +318,7 @@ mu_factor = mu0/(4*pi);
 elemV = img.fwd_model.elem_volume(:);      % [numElems × 1]
 
 % Expand elem_volume to cover stim × sensor
-elemV = reshape(elemV, [numElems 1 1]);  
+elemV = reshape(elemV, [numElems 1 1]);
 % Later this will broadcast to [numElems × numStim × numSensors]
 
 % Expand lambda and R terms to 3D
@@ -302,9 +336,9 @@ GzU = reshape(Gz_times_u, [numElems numStim 1]);
 
 % Compute all dfdx for all sensors+stim
 dfdx = elemV .* ( ...
-       GxL.*GxU + ...
-       GyL.*GyU + ...
-       GzL.*GzU );
+    GxL.*GxU + ...
+    GyL.*GyU + ...
+    GzL.*GzU );
 
 % Compute all dfdp (also 3D)
 switch select_sensor_axis
@@ -333,6 +367,7 @@ end
 
 return
 end
+
 %% FUNCTIONS:  calc_jacobian_1_axis
 function J = calc_jacobian_1axis(img,x,lambdatimesdAdp,A,select_sensor_axis)
 img.elem_data = x;
@@ -653,7 +688,7 @@ for m = 1:numSensors
 
     dfdpx_m = mu0/(4*pi)*(...
         -Rzt(:,m).*Gy_times_u+Ryt(:,m).*Gz_times_u);
-    
+
     dfdy_m = img.fwd_model.elem_volume.*(...
         Gx_times_lambdaY(:,m).*Gx_times_u + ...
         Gy_times_lambdaY(:,m).*Gy_times_u + ...
@@ -846,3 +881,327 @@ fprintf('\r Done. Took %d (s)\n',toc(t1));
 return
 end
 
+
+
+%% FUNCTIONS: Jacobian-vector product (matrix-free)
+function y = jacobian_vec_product(img, x, A, v, select_sensor_axis, verbose)
+% Computes J*v without assembling J
+% img               : EIDORS image struct
+% x                 : current conductivity vector (numElems x 1)
+% A                 : function handle A(x) that returns FEM matrix
+% v                 : vector to multiply (numElems x 1)
+% select_sensor_axis: 1,2,3
+% verbose           : true/false
+
+img.elem_data = x;
+mu0 = img.fwd_model.mu0;
+
+numNodes = size(img.fwd_model.nodes,1);
+numElems = size(img.fwd_model.elems,1);
+numStim = numel(img.fwd_model.stimulation);
+numSensors = numel(img.fwd_model.sensors);
+
+assert(size(v,1) == numElems && size(v,2) == 1,'v must be a column vector with number of elements entries');
+
+% Compute Gamma matrices
+img = compute_gamma_matrices(img);
+
+switch select_sensor_axis
+    case 1
+        Gamma = img.GammaX;
+        R1 = img.fwd_model.R.Rz';
+        R2 = img.fwd_model.R.Ry';
+    case 2
+        Gamma = img.GammaY;
+        R1 = img.fwd_model.R.Rx';
+        R2 = img.fwd_model.R.Rz';
+    case 3
+        Gamma = img.GammaZ;
+        R1 = img.fwd_model.R.Ry';
+        R2 = img.fwd_model.R.Rx';
+    otherwise
+        error('Invalid sensor axis')
+end
+
+% Forward solution
+u = fwd_solve(img);
+u = u.volt;
+
+% Solve adjoint problems for each sensor
+lambda = zeros(numNodes, numSensors);
+A_matrix = A(x);
+
+d = sqrt(diag(A_matrix));
+Mfun = @(x) x./d;
+Nfun = @(x) x./d;
+
+GammaT = Gamma.';
+
+parfor m = 1:numSensors
+    [lambda(:,m),~,~] = pcg(A_matrix,-GammaT(:,m),1e-6,numel(x),Mfun,Nfun);
+end
+
+Gx_times_lambda = img.fwd_model.G.Gx*lambda;
+Gy_times_lambda = img.fwd_model.G.Gy*lambda;
+Gz_times_lambda = img.fwd_model.G.Gz*lambda;
+
+Gx_times_u = img.fwd_model.G.Gx*u;
+Gy_times_u = img.fwd_model.G.Gy*u;
+Gz_times_u = img.fwd_model.G.Gz*u;
+
+mu_factor = mu0/(4*pi);
+
+elemV = img.fwd_model.elem_volume(:);      % [numElems × 1]
+
+dfdu_v = zeros(numSensors,numStim);
+dfdp_v = zeros(numSensors,numStim);
+
+for m = 1:numSensors
+    for j = 1:numStim
+        % This is all the columns at row (m,j) of the Jacobian matrix
+        %(elemV.*Gx_times_lambda(:,m).*Gx_times_u(:,j))
+
+        % The matrix-vector product is row .* vector
+        dfdu_v(m,j) = v'*(...
+            elemV.*(...
+                Gx_times_lambda(:,m).*Gx_times_u(:,j)+...
+                Gy_times_lambda(:,m).*Gy_times_u(:,j)+...
+                Gz_times_lambda(:,m).*Gz_times_u(:,j)...
+                ));
+
+        switch select_sensor_axis
+            case 1
+                dfdp_v(m,j) = v'*mu_factor*(-R1(:,m).*Gy_times_u(:,j)+ R2(:,m).*Gz_times_u(:,j));
+            case 2
+                dfdp_v(m,j) = v'*mu_factor*(-R1(:,m).*Gz_times_u(:,j)+ R2(:,m).*Gx_times_u(:,j));
+            case 3
+                dfdp_v(m,j) = v'*mu_factor*(-R1(:,m).*Gx_times_u(:,j)+ R2(:,m).*Gy_times_u(:,j));
+        end
+
+    end
+end
+
+% collapse first 2 dims → [numSensors*numStim × numElems]
+y = reshape(dfdu_v+dfdp_v, numSensors*numStim, 1);
+
+if verbose
+    fprintf('\r Done. Took %d (s)\n',toc(t1));
+end
+
+end
+
+
+
+function y = jacobian_vec_product_v2(img, x, A, v, select_sensor_axis, verbose)
+
+if verbose, t1 = tic; end
+
+img.elem_data = x;
+mu0 = img.fwd_model.mu0;
+
+numNodes   = size(img.fwd_model.nodes,1);
+numElems   = size(img.fwd_model.elems,1);
+numStim    = numel(img.fwd_model.stimulation);
+numSensors = numel(img.fwd_model.sensors);
+
+assert(iscolumn(v) && numel(v)==numElems,'v must be numElems×1');
+
+% --- Gamma matrices
+img = compute_gamma_matrices(img);
+
+switch select_sensor_axis
+    case 1
+        Gamma = img.GammaX;
+        R1 = img.fwd_model.R.Rz';
+        R2 = img.fwd_model.R.Ry';
+    case 2
+        Gamma = img.GammaY;
+        R1 = img.fwd_model.R.Rx';
+        R2 = img.fwd_model.R.Rz';
+    case 3
+        Gamma = img.GammaZ;
+        R1 = img.fwd_model.R.Ry';
+        R2 = img.fwd_model.R.Rx';
+    otherwise
+        error('Invalid sensor axis')
+end
+
+% --- Forward solve
+u = fwd_solve(img);
+u = u.volt;   % [numNodes × numStim]
+
+% --- Assemble system
+A_matrix = A(x);
+
+% Jacobi preconditioner
+d = sqrt(diag(A_matrix));
+Mfun = @(x) x./d;
+Nfun = @(x) x./d;
+
+GammaT = Gamma.';
+
+% --- Adjoint solves
+lambda = zeros(numNodes,numSensors);
+
+tol   = 1e-6;
+maxit = 200;
+
+parfor m = 1:numSensors
+    [lambda(:,m),~,~] = pcg(A_matrix,-GammaT(:,m),1e-6,numel(x),Mfun,Nfun);
+end
+
+% --- Gradients (elementwise)
+G = img.fwd_model.G;
+
+Gx_times_lambda = G.Gx * lambda;   % [numElems × numSensors]
+Gy_times_lambda = G.Gy * lambda;
+Gz_times_lambda = G.Gz * lambda;
+
+Gxu = G.Gx * u;        % [numElems × numStim]
+Gyu = G.Gy * u;
+Gzu = G.Gz * u;
+
+% --- Preweight once
+elemV = img.fwd_model.elem_volume(:);
+w = elemV .* v;        % [numElems × 1]
+
+% --- df/du · v   (vectorized!)
+dfdu_v = ...
+    (Gx_times_lambda.' .* w.') * Gxu + ...
+    (Gy_times_lambda.' .* w.') * Gyu + ...
+    (Gz_times_lambda.' .* w.') * Gzu;     % [numSensors × numStim]
+
+% --- df/dp · v
+mu_factor = mu0/(4*pi);
+
+switch select_sensor_axis
+    case 1
+        dfdp_v = mu_factor * ( ...
+            (-R1.' .* v.') * Gyu + ...
+             ( R2.' .* v.') * Gzu );
+    case 2
+        dfdp_v = mu_factor * ( ...
+            (-R1.' .* v.') * Gzu + ...
+             ( R2.' .* v.') * Gxu );
+    case 3
+        dfdp_v = mu_factor * ( ...
+            (-R1.' .* v.') * Gxu + ...
+             ( R2.' .* v.') * Gyu );
+end
+
+% --- Final vector
+y = reshape(dfdu_v + dfdp_v, [], 1);
+
+if verbose
+    fprintf('Done. Took %.2f s\n', toc(t1));
+end
+end
+
+
+% THIS IS WRONG!!!!!!!!!!!!!
+function y = vec_jacobian_product_v2(img, x, A, w, select_sensor_axis, verbose)
+% Computes w'*J or J^T*w
+
+img.elem_data = x;
+mu0 = img.fwd_model.mu0;
+
+numNodes = size(img.fwd_model.nodes,1);
+numElems = size(img.fwd_model.elems,1);
+numStim = numel(img.fwd_model.stimulation);
+numSensors = numel(img.fwd_model.sensors);
+
+assert(size(w,1) == numStim*numSensors && size(w,2) == 1,'w must be a column vector with numStim*numSensors');
+
+% Compute Gamma matrices
+img = compute_gamma_matrices(img);
+
+switch select_sensor_axis
+    case 1
+        Gamma = img.GammaX;
+        R1 = img.fwd_model.R.Rz';
+        R2 = img.fwd_model.R.Ry';
+    case 2
+        Gamma = img.GammaY;
+        R1 = img.fwd_model.R.Rx';
+        R2 = img.fwd_model.R.Rz';
+    case 3
+        Gamma = img.GammaZ;
+        R1 = img.fwd_model.R.Ry';
+        R2 = img.fwd_model.R.Rx';
+    otherwise
+        error('Invalid sensor axis')
+end
+
+% Forward solution
+u = fwd_solve(img);
+u = u.volt;
+
+% Solve adjoint problems for each sensor
+lambda = zeros(numNodes, numSensors);
+A_matrix = A(x);
+
+d = sqrt(diag(A_matrix));
+Mfun = @(x) x./d;
+Nfun = @(x) x./d;
+
+GammaT = Gamma.';
+
+parfor m = 1:numSensors
+    [lambda(:,m),~,~] = pcg(A_matrix,-GammaT(:,m),1e-6,numel(x),Mfun,Nfun);
+end
+
+w_mat = reshape(w, numSensors,numStim);
+
+
+Gx_times_lambda = img.fwd_model.G.Gx*lambda;
+Gy_times_lambda = img.fwd_model.G.Gy*lambda;
+Gz_times_lambda = img.fwd_model.G.Gz*lambda;
+
+Gx_times_u = img.fwd_model.G.Gx*u;
+Gy_times_u = img.fwd_model.G.Gy*u;
+Gz_times_u = img.fwd_model.G.Gz*u;
+
+mu_factor = mu0/(4*pi);
+
+elemV = img.fwd_model.elem_volume(:);      % [numElems × 1]
+
+% Expand elem_volume to cover stim × sensor
+elemV = reshape(elemV, [numElems 1 1]);
+% Later this will broadcast to [numElems × numStim × numSensors]
+
+% Expand lambda and R terms to 3D
+GxL = reshape(Gx_times_lambda, [numElems 1 numSensors]); % [: × 1 × numSensors]
+GyL = reshape(Gy_times_lambda, [numElems 1 numSensors]);
+GzL = reshape(Gz_times_lambda, [numElems 1 numSensors]);
+
+R1_ = reshape(R1, [numElems 1 numSensors]);
+R2_ = reshape(R2, [numElems 1 numSensors]);
+
+% Expand u-terms to 3D
+GxU = reshape(Gx_times_u, [numElems numStim 1]); % [: × numStim × 1]
+GyU = reshape(Gy_times_u, [numElems numStim 1]);
+GzU = reshape(Gz_times_u, [numElems numStim 1]);
+
+% Compute all dfdx for all sensors+stim
+dfdx = elemV .* ( ...
+    GxL.*GxU + ...
+    GyL.*GyU + ...
+    GzL.*GzU );
+
+tensorprod(w_mat,dfdx,[1,2],[3,2])
+
+% collapse first 2 dims → [numSensors*numStim × numElems]
+y = reshape(dfdu_v+dfdp_v, numSensors*numStim, 1);
+
+% Now reshape to match J(ids,:)
+% permute to [numSensors × numStim × numElems]
+temp = permute(dfdx, [3 2 1]);
+
+% collapse first 2 dims → [numSensors*numStim × numElems]
+Ju = reshape(temp, numSensors*numStim, numElems);
+
+
+if verbose
+    fprintf('\r Done. Took %d (s)\n',toc(t1));
+end
+end
