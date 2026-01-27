@@ -18,26 +18,15 @@ assert(...
     ismember(measurement_axis_type,valid_measurement_axis_type ),...
     sprintf('measurement_axis_type: %s is not valid',measurement_axis_type))
 
-switch configuration_type
-    case 'cylindrical'
-        opts = parse_options(options,configuration_type);
-        sensor_locations  = ...
-            place_magnetometers_cylindrical( ...
-            opts.num_rings,opts.num_sensors_per_ring,...
-            opts.heights,opts.sensor_radius);
+opts = parse_options(options,configuration_type);
 
-    case 'spherical'
-        opts = parse_options(options,configuration_type);
-        sensor_locations  = ...
-            place_magnetometers_spherical(opts.num_sensors,opts.center,opts.sensor_radius);
-end
+sensor_locations = place_magnetometers_positions(opts,configuration_type);
 
-sensor_axes = ...
-    construct_sensor_axis(sensor_locations,measurement_axis_type);
+sensor_axes = construct_sensor_axis(sensor_locations,measurement_axis_type);
 
 end
 
-%% Functions:
+%% FUNCTIONS: parse_options
 function opts = parse_options(options,configuration_type)
     switch configuration_type
         case 'cylindrical'
@@ -53,7 +42,24 @@ function opts = parse_options(options,configuration_type)
             opts.center = options{3};
     end
 end
-%% Functions:
+
+%% FUNCTIONS: place_magnetometers
+function sensor_locations = place_magnetometers_positions(opts,configuration_type)
+
+switch configuration_type
+    case 'cylindrical'
+        sensor_locations  = ...
+            place_magnetometers_cylindrical( ...
+            opts.num_rings,opts.num_sensors_per_ring,...
+            opts.heights,opts.sensor_radius);
+
+    case 'spherical'
+        sensor_locations  = ...
+            place_magnetometers_spherical(opts.num_sensors,opts.center,opts.sensor_radius);
+end
+
+end
+%% FUNCTIONS: place_magnetometers_cylindrical
 function sensor_locations  = place_magnetometers_cylindrical(...
     num_rings,...
     num_sensors_per_ring,...
@@ -78,7 +84,7 @@ end
 
 end
 
-%% Functions:
+%% FUNCTIONS: place_magnetometers_spherical
 function sensor_locations  = place_magnetometers_spherical(...
     num_sensors,...
     center,...
@@ -91,8 +97,7 @@ sensor_locations = sensor_radius*V+center;
 
 end
 
-%% Functions:
-
+%% FUNCTIONS: construct_sensor_axis
 function sensor_axes = construct_sensor_axis(sensor_locations,measurement_axis_type)
 
 num_sensors = size(sensor_locations,1);
