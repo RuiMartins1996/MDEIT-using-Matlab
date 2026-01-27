@@ -195,7 +195,7 @@ minsz_mesh_convergence = 0.05;
 maxsz_mesh_convergence = 0.05;
 num_meshes_mesh_convergence = 1;
 
-maxsz_reconstruction = 0.1;
+maxsz_reconstruction = 0.02;
 
 background_conductivity = 3.28e-1/sigma0;  %page 163 mentions a saline solution (NaCl + water) at 0.2% mass concentration, but can't find data for that conductivity, check notes
 
