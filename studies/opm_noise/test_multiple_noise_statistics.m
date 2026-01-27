@@ -27,7 +27,7 @@ model_folder = prepare_workspace(script_folder);
 %% Create/fetch model_parameters
 
 SNR_vector = [1 10 30 50];
-noise_type = 'opm';
+noise_type = 'pink';
 
 noise_data_path = fullfile(script_folder, ...
     'EnvironmentalNoise\sub-001\ses-001\meg\dsub-001_ses-001_task-noise_run-001_meg.mat');

@@ -29,7 +29,17 @@ addpath(genpath(fullfile(grandparent_folder,'functions')));
 
 model_folder = prepare_workspace(script_folder);
 
-data_folder = './data_sensor_radius';
+% data_folder = './data_sensor_radius/model_1a77b32148e3883a';  %default geometry, 1 ring, 16 electrodes
+% data_folder = './data_sensor_radius/model_b24a3f55248f08f4';  %default geometry, 2 rings, 16 electrodes
+%data_folder = './data_sensor_radius/model_27eec1f6d6175846';   %default geometry, 3 rings, 16 electrodes
+
+% data_folder = './data_sensor_radius/model_f93caefc9d331fc3'; %height = 0.75*radius, 1 ring, 16 electrodes
+% data_folder = './data_sensor_radius/model_1042fe31f7183517';  %height = radius, 1 ring, 16 electrodes
+% data_folder = './data_sensor_radius/model_bf76c6b87b10ff73';    %height = 1.5*radius, 1 ring, 16 electrodes
+% data_folder = './data_sensor_radius/model_1c3f7a12217ee912';    %height = 2*radius, 1 ring, 16 electrodes
+
+data_folder = './data_sensor_radius/model_d57206f1497fd55e'; %height = radius, 1 ring, 16 electrodes, radius = 80mm
+
 
 file_name_eit = strcat(data_folder,'/singular_values_eit.mat');
 file_name_mdeit_x = strcat(data_folder,'/singular_values_mdeit_x.mat');
@@ -103,7 +113,7 @@ for i = 1:length(data_vec)
         'Marker',markers{i},'MarkerSize',marker_size,'Color',colors(i,:));
 end
 hold off
-grid on;grid minor;
+grid on;grid minor;box on;
 
 set(gca,'YScale','log')
 set(gca,'XScale','log')
@@ -141,7 +151,7 @@ for i = 1:length(data_vec)
         'Marker',markers{i},'MarkerSize',marker_size,'Color',colors(i,:));
 end
 hold off
-grid on;grid minor;
+grid on;grid minor;box on
 
 set(gca,'YScale','log')
 set(gca,'XScale','log')

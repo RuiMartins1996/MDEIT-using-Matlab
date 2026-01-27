@@ -27,25 +27,24 @@ V0 = z0*I0/(l0^2); %(V)
 sigma0 = l0/z0; %(S/m)
 J0 = I0/(l0^2);
 
-
+% Set multiple SNR to test
 SNR_vector = [20];
+% Set noise type 
 noise_type = 'white';
 
-% For optimiziation
+% Set the minimum sensor radius
 sensor_radius_0 = 1.01;
 rmin = sensor_radius_0;
 rmax = 3;
 
-num_noise_repetitions = 30;
+% Number of noise samples to gather for noise based correction
+num_noise_repetitions = 15;
 
 %% Problem parameters
 background_conductivity = 3.28e-1/sigma0;
 anomaly_conductivity = 1e-12/sigma0;
 
 maxsz_reconstruction = 5e-3/l0;
-
-% model_parameters = create_kai_2d_model_parameters(l0, z0, sigma0, I0);
-% model_height = 0;
 
 model_parameters = create_default_3d_model_parameters(l0, z0, sigma0, I0);
 model_height = model_parameters.height/2;
@@ -76,7 +75,7 @@ imgh = mk_image_mdeit(fmdl,background_conductivity);
 imgi = add_material_properties(imgh,[background_conductivity,anomaly_conductivity]);
 
 figure
-show_fem(imgi);
+show_fem_transparent_edges(imgi);
 pause(1e-10)
 %% Optimization
 num_of_sensors = model_parameters.numOfSensors;
@@ -165,6 +164,8 @@ else
     sensor_positions = [r_fminbnd*cos(theta)',r_fminbnd*sin(theta)',model_height*ones(num_of_sensors,1)];
     sensor_locations_r_fminbnd = [sensor_positions(:,1);sensor_positions(:,2)];
     condition_number_at_r_fminbnd = compute_jacobian_mdeit1_condition_number_v2(imgh,sensor_locations_r_fminbnd);
+    
+    sensor_locations_opt_r_fminbnd = reshape([sensor_locations_r_fminbnd(:);model_height*ones(num_of_sensors,1)],[num_of_sensors,3]);
 
     save(fullfile(data_folder,'r_fminbnd_file.mat'),'r_fminbnd','f_r_fminbnd','condition_number_at_r_fminbnd');
 
@@ -181,7 +182,7 @@ else
 
     for i = 1:length(r_vec)
 
-        fprintf('Index %i of %i\n',i,length(r_vec));
+        fprintf('Index of r : %i of %i\n',i,length(r_vec));
         theta = linspace(0,2*pi,num_of_sensors);
         sensor_positions = ...
             [r_vec(i)*cos(theta)',r_vec(i)*sin(theta)',model_height*ones(num_of_sensors,1)];
@@ -198,7 +199,7 @@ opts = optimoptions('particleswarm', ...
     'Display','iter', ...
     'UseParallel', true, ...
     'SwarmSize', 20, ...        % tuneable
-    'MaxIterations', 20);      % tuneable
+    'MaxIterations', 1);      % tuneable
 
 lb = -rmax*ones(length(sensor_locations_vector_0),1);
 ub =  rmax*ones(length(sensor_locations_vector_0),1);
@@ -234,7 +235,6 @@ vert_line_condition_number = linspace(min(condition_number_at_r),max(condition_n
 
 id_min_cond_number = find(condition_number_at_r==min(condition_number_at_r));
 id_cost = find(cost_at_r==min(cost_at_r));
-
 
 figure
 
