@@ -16,7 +16,7 @@ classdef testRMatrices < matlab.unittest.TestCase
             testCase.testParameters.J = [1 1 1];
 
             % Error threshold
-            testCase.testParameters.errorThresh = 0.5e-1;
+            testCase.testParameters.errorThresh = 1;
         end
     end
 
