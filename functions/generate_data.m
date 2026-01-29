@@ -52,7 +52,9 @@ switch recon_mode
         if any(strcmp(noise_structure.type,{'white','pink','brown'}))
 
             assert(isfield(noise_structure,'sampling_rate'),'must have field sampling_rate here');
+            assert(isfield(noise_structure,'epoch_time'),'must have field epoch_time here');
             n_samples_epoch = noise_structure.epoch_time*noise_structure.sampling_rate; % number of samples in the epoch
+            
             noise_structure.n_samples_epoch = n_samples_epoch;
             
             dBx_noisy = dBx;
