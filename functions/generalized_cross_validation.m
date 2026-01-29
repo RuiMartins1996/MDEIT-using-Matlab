@@ -57,9 +57,31 @@ recon_mode = imdl.recon_mode;
 valid_modes = {'mdeit1', 'mdeit3','eit'};
 assert(ismember(recon_mode, valid_modes),'my_inv_solve: invalid recon_mode "%s". Must be ''eit'',''mdeit1'' or ''mdeit3''.', recon_mode)
 
+n_sensors = numel(imdl.fwd_model.sensors);
+n_inj = numel(imdl.fwd_model.stimulation);
+
+
 if strcmp(recon_mode,'mdeit1')
     assert(isfield(imdl,'select_sensor_axis'),'Expected field imdl.select_sensor_axis');
     select_sensor_axis = imdl.select_sensor_axis;
+
+    % Check if data size matches expected size:
+    assert(size(data,1) == n_sensors*n_inj,'Size of data is wrong');
+end
+
+if strcmp(recon_mode,'mdeit3')
+    % Check if data size matches expected size:
+    assert(size(data,1) == 3*n_sensors*n_inj,'Size of data is wrong');
+end
+
+if strcmp(recon_mode,'eit')
+    % Check if data size matches expected size:
+    n_meas = 0;
+
+    for i = 1:numel(imdl.fwd_model.stimulation)
+        n_meas = n_meas +  size(imdl.fwd_model.stimulation(i).meas_pattern,1);
+    end
+    assert(size(data,1) == n_meas,'Size of data is wrong');
 end
 
 % Make background image
