@@ -81,11 +81,13 @@ try
     sol = gn_solve(res, jac, x0, tol, max_iterations, RtR, lambda,[],verbose);
 
     else
+        warning('EIDORS went for left_divide on inv_solve_diff_GN_one_step, st00pid')
         sol = eidors_cache(@get_RM, inv_model,'inv_solve_diff_GN_one_step' ) * dv;
 
     end
 
 catch
+    warning('EIDORS went for left_divide on inv_solve_diff_GN_one_step, st00pid');
     sol = eidors_cache(@get_RM, inv_model,'inv_solve_diff_GN_one_step' ) * dv;
 end
 
