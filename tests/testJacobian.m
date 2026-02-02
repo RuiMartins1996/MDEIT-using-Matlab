@@ -41,7 +41,6 @@ classdef testJacobian < matlab.unittest.TestCase
 
             current_amplitude = 2.4e-3/I0;
             background_conductivity = 3.28e-1/sigma0;
-
             
             model_parameters = create_default_3d_model_parameters(l0, z0, sigma0, I0);
             
@@ -56,6 +55,7 @@ classdef testJacobian < matlab.unittest.TestCase
             %% Create a very coarse forward model
             [~,fmdls] = mk_mdeit_model(model_parameters,model_folder);
             fmdl = fmdls{1};
+
             %% Stimulation pattern is not the default. For now, edit it manually
             inj = [0 3]; %skip 2 pattern (pg 172)
             meas = [0 3]; %for EIT, skip2 measurement protocol was used
@@ -171,22 +171,81 @@ classdef testJacobian < matlab.unittest.TestCase
             %% Create a very coarse forward model
             [model_parameters,fmdls] = mk_mdeit_model(model_parameters,model_folder);
             fmdl = fmdls{1};
-            %% Stimulation pattern is not the default. For now, edit it manually
-            inj = [0 3]; %skip 2 pattern (pg 172)
-            meas = [0 3]; %for EIT, skip2 measurement protocol was used
-            stimulation = mk_stim_patterns(model_parameters.numOfElectrodesPerRing,model_parameters.numOfRings,inj,meas,{},current_amplitude);
+
+            %% Edit this model so that the electrodes are on the top and bottom of the cylinder:
+
+            % cyl_shape = [model_parameters.height,model_parameters.radius,model_parameters.maxsz];
+            % elec_pos = [];
+            % elec_shape = [];
+            % 
+            % fmdl= ng_mk_cyl_models(cyl_shape,elec_pos,elec_shape);
+
+            %% Assign 2 electrodes on the top and bottom of the cylinder
+
+            % Find nodes at bottom
+            bottom_nodes = find(abs(fmdl.nodes(:,3)- 0.0)<1e-12);
+            top_nodes = find(abs(fmdl.nodes(:,3) - model_parameters.height)<1e-12);
+
+            electrode(1).nodes =  bottom_nodes;
+            electrode(1).z_contact = 1;
+
+            electrode(2).nodes =top_nodes;
+            electrode(2).z_contact = 1;
+
+            fmdl.electrode = electrode;
+
+            %% Create a stimulation structure
+            stimulation.stimulation = 'Amp';
+            stimulation.stim_pattern = sparse([1 2],[1 1],[-1 1],2,1);
+            stimulation.meas_pattern = sparse([1 2 1 2],[1 1 2 2],[-1 1 1 -1],2,2);
 
             fmdl.stimulation = stimulation;
+
+            % %% Stimulation pattern is not the default. For now, edit it manually
+            % % inj = [0 3]; %skip 2 pattern (pg 172)
+            % % meas = [0 3]; %for EIT, skip2 measurement protocol was used
+            % % stimulation = mk_stim_patterns(model_parameters.numOfElectrodesPerRing,model_parameters.numOfRings,inj,meas,{},current_amplitude);
+            % 
+            % fmdl.stimulation = stimulation;
 
             %Make homogeneous image
             imgh = mk_image_mdeit(fmdl,background_conductivity);
             
-            % %% 
-            % hold on
-            % show_fem(fmdl);
-            % plot_sensors(fmdl);
+            %% Plot the model and the forward solution
+            figure
+            subplot(1,2,1)
+            hold on
+            show_fem(fmdl);
+            plot_sensors(fmdl,true);
+            hold off
+            view(3);box on;
 
-            %% Compute jacobian
+            [data,u] = fwd_solve_mdeit(imgh);
+
+            hold on
+            subplot(1,2,2)
+            img_v = rmfield(imgh, 'elem_data');
+            img_v.node_data = u.volt(:,1);
+            hold on
+            show_fem(img_v);
+            plot_sensors(fmdl)
+
+            for m = 1:numel(fmdl.sensors)
+                sensor_position = fmdl.sensors(m).position;
+                b_rthetaz = [data.Bx(m) data.By(m) data.Bz(m)]; %THIS IS IN CYLIDNRICAL COORDINATES
+
+                b_vector = ...
+                    b_rthetaz(1)*fmdl.sensors(m).axes.axis1+...
+                    b_rthetaz(2)*fmdl.sensors(m).axes.axis2+...
+                    b_rthetaz(3)*fmdl.sensors(m).axes.axis3;
+                hold on
+                quiver3(sensor_position(1),sensor_position(2),sensor_position(3),...
+                    b_vector(1),b_vector(2),b_vector(3),50)
+            end
+            axis([-2.1 2.1 -2.1 2.1])
+            hold off
+            view(3);box on;
+            %% Compute jacobian with adjoint method and finite differences
 
             verbose = true;
             lambdatimesdAdp = []; %legacy
@@ -194,16 +253,19 @@ classdef testJacobian < matlab.unittest.TestCase
             A = @(x) M(imgh,x);
             recon_mode = 'mdeit1';
 
-            select_sensor_axis = 1;
-            J_mdeit_1 = calc_jacobian_mdeit(imgh,imgh.elem_data,lambdatimesdAdp,A,recon_mode,select_sensor_axis,verbose);
+            select_sensor_axis = 2; % theta axis
+            J_mdeit_2 = calc_jacobian_mdeit(imgh,imgh.elem_data,lambdatimesdAdp,A,recon_mode,select_sensor_axis,verbose);
             
-            % Compute jacobian with finite-differences
-            [J_mdeit_fd_1,J_mdeit_fd_2,J_mdeit_fd_3] = calc_jacobian_finite_differences(imgh,min(imgh.elem_data)*1e-6);
+            % Compute jacobian with finite-differences ( for this case,
+            % delta = min(imgh.elem_data)*1e-5 seemed to give good results)
+            [J_mdeit_fd_1,J_mdeit_fd_2,J_mdeit_fd_3] = calc_jacobian_finite_differences(imgh,min(imgh.elem_data)*1e-5);
             
-            error_1_percentage = abs(J_mdeit_fd_1(:)-J_mdeit_1(:))./abs(J_mdeit_1(:))*100;
-            % error_2_percentage = abs(J_mdeit_fd_2(:)-J_mdeit_2(:))./abs(J_mdeit_2(:))*100;
-            % error_3_percentage = abs(J_mdeit_fd_3(:)-J_mdeit_3(:))./abs(J_mdeit_3(:))*100;
+            % Check only the theta component
+            error_2_percentage = abs(J_mdeit_fd_2(:)-J_mdeit_2(:))./abs(J_mdeit_2(:))*100;
+            
+            fprintf('Error inf-norm: %2.2f%%\n',norm(error_2_percentage,'inf'));
 
+            testCase.verifyTrue(norm(error_2_percentage,'inf')<1);
         end
     end
     
