@@ -22,7 +22,7 @@ classdef testRMatrices < matlab.unittest.TestCase
 
     methods(Test)
         function testExactExpressionForRMatrices(testCase)
-             %% Prepare workspace
+            %% Prepare workspace
             % Get the full path of the current script
             fullpath = mfilename('fullpath');
             % Extract just the folder
