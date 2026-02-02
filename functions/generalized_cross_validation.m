@@ -128,7 +128,10 @@ end
 
 fprintf('Precomputing SVD...\n')
 
+tic 
 [U,S,V] = svd(J,'econ');
+
+fprintf('Time %2.2f\n',toc);
 sigma = diag(S);             % singular values
 Uy = U' * data;              % coordinates of data in U-basis
 m = size(J,1);
@@ -151,6 +154,55 @@ for i = 1:n
 end
 
 optimal_id = find(V_lambda == min(V_lambda));
+
+% V1 = V_lambda;
+
+% TRY randomized-SVD algorithm (THIS APPROACH ENDS UP TAKING LONGER THAN
+% JUST svds(J,'econ');
+% tic
+% Compute the first singular value (rough estimate, to avoid using svds(J,1))
+% niter = 10;
+% sigma1 = estimate_sigma1(J, niter);
+% sigma1 = normest(J);
+
+% Set tolerance to 1% of maximum singular value
+% [U,S,V] = rsvd(J,[],0.01*sigma1);
+
+% [U,S,V] = rsvd(J,m);
+% 
+% fprintf('Time %2.2f\n',toc);
+% 
+% sigma = diag(S);             % singular values
+% Uy = U' * data;              % coordinates of data in U-basis
+% m = size(J,1);
+% n = length(lambda_vector);
+% 
+% V_lambda = zeros(n,1);
+% 
+% for i = 1:n
+%     lambda = lambda_vector(i);
+% 
+%     gamma = sigma.^2 ./ (sigma.^2 + m*lambda);    % shrinkage factors
+% 
+%     one_minus_gamma = 1 - gamma;
+% 
+%     numerator = (1/m) * sum( (one_minus_gamma .* Uy).^2 );
+% 
+%     denominator = ( (1/m) * sum(one_minus_gamma) )^2;
+% 
+%     V_lambda(i) = numerator / denominator;
+% end
+% 
+% V2 = V_lambda;
+% 
+% rank(J)
+% optimal_id = find(V_lambda == min(V_lambda));
+
+% TRY gpuArray (THIS APPROACH ENDS UP TAKING LONGER TOO)
+% tic
+% Jg = gpuArray(J);
+% [U,S,V] = svd(Jg,'econ');
+% fprintf('Time %2.2f\n',toc);
 
 if numel(optimal_id)>1
     warning('Multiple minimum values found! Taking smallest one');
@@ -199,4 +251,15 @@ Ae = s_mat.E(1:numNodes,numNodes+1:end);
 Ad = s_mat.E(numNodes+1:end,numNodes+1:end);
 
 out = Ac-Ae*inv(Ad)*Ae';
+end
+
+
+function sigma1 = estimate_sigma1(A, niter)
+    if nargin < 2, niter = 20; end
+    x = randn(size(A,2),1);
+    for i = 1:niter
+        x = A'*(A*x);        % multiply by A'A
+        x = x / norm(x);
+    end
+    sigma1 = norm(A*x);      % ||A*x|| ≈ largest singular value
 end
