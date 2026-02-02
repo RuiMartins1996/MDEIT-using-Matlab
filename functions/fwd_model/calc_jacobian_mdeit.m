@@ -64,8 +64,7 @@ if strcmp(recon_mode,'mdeit1')
     % disp('End');
 
 elseif strcmp(recon_mode,'mdeit3')
-    J = calc_jacobian_3axis_direct(img,x,lambdatimesdAdp,A,verbose);
-    % J = calc_jacobian_3axis(img,x,lambdatimesdAdp,A);
+    J = calc_jacobian_3axis_direct_fully_vectorized(img,x,A,verbose);
 else
     error('This branch should never be reached')
 end
@@ -91,28 +90,31 @@ function J = calc_jacobian_1axis_direct_fully_vectorized(img,x,A,select_sensor_a
 img.elem_data = x;
 mu0 = img.fwd_model.mu0;
 
-numNodes =  size(img.fwd_model.nodes,1);
-numElems = size(img.fwd_model.elems,1);
+n_nodes =  size(img.fwd_model.nodes,1);
+n_elem = size(img.fwd_model.elems,1);
 
-numStim = numel(img.fwd_model.stimulation);
-numSensors = numel(img.fwd_model.sensors);
+num_stim = numel(img.fwd_model.stimulation);
+num_sensors = numel(img.fwd_model.sensors);
 
 % Compute Gamma matrices
 img = compute_gamma_matrices(img);
 
+R = img.fwd_model.R;
+G = img.fwd_model.G;
+
 switch select_sensor_axis
     case 1
-        Gamma = img.GammaX;
-        R1 = img.fwd_model.R.Rz';
-        R2 = img.fwd_model.R.Ry';
+        Gamma = img.Gamma1;
+        R1 = R.Rz';
+        R2 = R.Ry';
     case 2
-        Gamma = img.GammaY;
-        R1 = img.fwd_model.R.Rx';
-        R2 = img.fwd_model.R.Rz';
+        Gamma = img.Gamma2;
+        R1 = R.Rx';
+        R2 = R.Rz';
     case 3
-        Gamma = img.GammaZ;
-        R1 = img.fwd_model.R.Ry';
-        R2 = img.fwd_model.R.Rx';
+        Gamma = img.Gamma3;
+        R1 = R.Ry';
+        R2 = R.Rx';
     otherwise
         error('here')
 end
@@ -122,7 +124,7 @@ u = fwd_solve(img);
 u = u.volt;
 
 % Solve the adjoint problem for each sensor to get lambda vectors
-lambda = zeros(numNodes,numSensors);
+lambda = zeros(n_nodes,num_sensors);
 
 A_matrix = A(x);
 
@@ -136,7 +138,7 @@ afterEach(q, @(t) update_progress(t));
         progress.count = progress.count + 1;
         progress.times(progress.count) = t;
 
-        est_time_left = (numSensors - progress.count) * mean(progress.times(1:progress.count));
+        est_time_left = (num_sensors - progress.count) * mean(progress.times(1:progress.count));
 
         fprintf('\r ETA %s: %.1f (s)', progress.label, est_time_left);
         % fprintf('%.1f (s)\n', );
@@ -145,9 +147,9 @@ afterEach(q, @(t) update_progress(t));
         end
     end
 
-times = zeros(numSensors,1);
+times = zeros(num_sensors,1);
 % Shared counter and total (accessible inside nested function)
-progress = struct('count', 0, 'total', numSensors,'times',times, 'label', 'solving lambda systems');
+progress = struct('count', 0, 'total', num_sensors,'times',times, 'label', 'solving lambda systems');
 
 % Jacobi preconditioner - matrix free
 d = sqrt(diag(A_matrix));        % vector of diagonal entries
@@ -163,7 +165,7 @@ GammaT = Gamma.';
 % R = ichol(A_matrix);
 % Rt = R';
 
-parfor m = 1:numSensors
+parfor m = 1:num_sensors
     t_start = tic;
     [lambda(:,m),~,~] = pcg(A_matrix,-GammaT(:,m),1e-6,numel(x),Mfun,Nfun);
     % [lambda(:,m),~,~] = pcg(A_matrix,-GammaT(:,m),1e-6,numel(x),R,Rt);
@@ -174,34 +176,31 @@ end
 
 t1 = tic;
 
-Gx_times_lambda = img.fwd_model.G.Gx*lambda;
-Gy_times_lambda = img.fwd_model.G.Gy*lambda;
-Gz_times_lambda = img.fwd_model.G.Gz*lambda;
+Gx_times_lambda = G.Gx*lambda;
+Gy_times_lambda = G.Gy*lambda;
+Gz_times_lambda = G.Gz*lambda;
 
-Gx_times_u = img.fwd_model.G.Gx*u;
-Gy_times_u = img.fwd_model.G.Gy*u;
-Gz_times_u = img.fwd_model.G.Gz*u;
+Gx_times_u = G.Gx*u;
+Gy_times_u = G.Gy*u;
+Gz_times_u = G.Gz*u;
 
 mu_factor = mu0/(4*pi);
 
 elemV = img.fwd_model.elem_volume(:);      % [numElems × 1]
 
 % Expand elem_volume to cover stim × sensor
-elemV = reshape(elemV, [numElems 1 1]);
+elemV = reshape(elemV, [n_elem 1 1]);
 % Later this will broadcast to [numElems × numStim × numSensors]
 
 % Expand lambda and R terms to 3D
-GxL = reshape(Gx_times_lambda, [numElems 1 numSensors]); % [: × 1 × numSensors]
-GyL = reshape(Gy_times_lambda, [numElems 1 numSensors]);
-GzL = reshape(Gz_times_lambda, [numElems 1 numSensors]);
-
-R1_ = reshape(R1, [numElems 1 numSensors]);
-R2_ = reshape(R2, [numElems 1 numSensors]);
+GxL = reshape(Gx_times_lambda, [n_elem 1 num_sensors]); % [: × 1 × numSensors]
+GyL = reshape(Gy_times_lambda, [n_elem 1 num_sensors]);
+GzL = reshape(Gz_times_lambda, [n_elem 1 num_sensors]);
 
 % Expand u-terms to 3D
-GxU = reshape(Gx_times_u, [numElems numStim 1]); % [: × numStim × 1]
-GyU = reshape(Gy_times_u, [numElems numStim 1]);
-GzU = reshape(Gz_times_u, [numElems numStim 1]);
+GxU = reshape(Gx_times_u, [n_elem num_stim 1]); % [: × numStim × 1]
+GyU = reshape(Gy_times_u, [n_elem num_stim 1]);
+GzU = reshape(Gz_times_u, [n_elem num_stim 1]);
 
 % Compute all dfdx for all sensors+stim
 dfdx = elemV .* ( ...
@@ -210,16 +209,44 @@ dfdx = elemV .* ( ...
     GzL.*GzU );
 
 % Compute all dfdp (also 3D)
-switch select_sensor_axis
-    case 1
-        dfdp = mu_factor * ( -R1_.*GyU + R2_.*GzU );
+Rx_ = reshape(R.Rx', [n_elem 1 num_sensors]);
+Ry_ = reshape(R.Ry', [n_elem 1 num_sensors]);
+Rz_ = reshape(R.Rz', [n_elem 1 num_sensors]);
 
-    case 2
-        dfdp = mu_factor * ( -R1_.*GzU + R2_.*GxU );
+% These are the derivatives with respect to sigma of the C components of the Gamma matrix,
+dCxdp = ( -Rz_.*GyU + Ry_.*GzU );
+dCydp = ( -Rx_.*GzU + Rz_.*GxU );
+dCzdp = ( -Ry_.*GxU + Rx_.*GyU );
 
-    case 3
-        dfdp = mu_factor * ( -R1_.*GxU + R2_.*GyU );
+% The g matrix does not depend on sigma. 
+g = zeros(num_sensors,3,3);
+for m = 1:numel(img.fwd_model.sensors)
+    g(m,:,:) = [...
+        img.fwd_model.sensors(m).axes.axis1;
+        img.fwd_model.sensors(m).axes.axis2;
+        img.fwd_model.sensors(m).axes.axis3];
 end
+
+% g: [num_sensors × 3 × 3]
+gx = reshape(g(:,select_sensor_axis,1), [1 1 num_sensors]);
+gy = reshape(g(:,select_sensor_axis,2), [1 1 num_sensors]);
+gz = reshape(g(:,select_sensor_axis,3), [1 1 num_sensors]);
+
+dfdp = mu_factor*(...
+    gx.*dCxdp +...
+    gy.*dCydp +...
+    gz.*dCzdp);
+    
+% switch select_sensor_axis
+%     case 1
+%         dfdp = mu_factor * ( -R1_.*GyU + R2_.*GzU );
+% 
+%     case 2
+%         dfdp = mu_factor * ( -R1_.*GzU + R2_.*GxU );
+% 
+%     case 3
+%         dfdp = mu_factor * ( -R1_.*GxU + R2_.*GyU );
+% end
 
 dfd = dfdx + dfdp;   % size: [numElems × numStim × numSensors]
 
@@ -228,7 +255,7 @@ dfd = dfdx + dfdp;   % size: [numElems × numStim × numSensors]
 dfd = permute(dfd, [3 2 1]);
 
 % collapse first 2 dims → [numSensors*numStim × numElems]
-J = reshape(dfd, numSensors*numStim, numElems);
+J = reshape(dfd, num_sensors*num_stim, n_elem);
 
 if verbose
     fprintf('\r Done. Took %d (s)\n',toc(t1));
@@ -237,39 +264,32 @@ end
 return
 end
 
-%% FUNCTIONS
-function J = calc_jacobian_3axis_direct(img,x,lambdatimesdAdp,A,verbose)
+%% FUNCTIONS:
+function J = calc_jacobian_3axis_direct_fully_vectorized(img,x,A,verbose)
 
 img.elem_data = x;
 mu0 = img.fwd_model.mu0;
 
-numNodes =  size(img.fwd_model.nodes,1);
-numElements = size(img.fwd_model.elems,1);
+n_nodes =  size(img.fwd_model.nodes,1);
+n_elem = size(img.fwd_model.elems,1);
 
-numStim = numel(img.fwd_model.stimulation);
-numSensors = numel(img.fwd_model.sensors);
-
-J = zeros(3*numStim*numSensors,numElements);
+num_stim = numel(img.fwd_model.stimulation);
+num_sensors = numel(img.fwd_model.sensors);
 
 % Compute Gamma matrices
 img = compute_gamma_matrices(img);
 
-Gamma1 = img.Gamma1;
-Gamma2 = img.Gamma2;
-Gamma3 = img.Gamma3;
-
-Rxt = img.fwd_model.R.Rx';
-Ryt = img.fwd_model.R.Ry';
-Rzt = img.fwd_model.R.Rz';
+R = img.fwd_model.R;
+G = img.fwd_model.G;
 
 % Compute EIT forward solution for each current injection pattern
 u = fwd_solve(img);
 u = u.volt;
 
 % Solve the adjoint problem for each sensor to get lambda vectors
-lambdaX = zeros(numNodes,numSensors);
-lambdaY = zeros(numNodes,numSensors);
-lambdaZ = zeros(numNodes,numSensors);
+lambda1 = zeros(n_nodes,num_sensors);
+lambda2 = zeros(n_nodes,num_sensors);
+lambda3 = zeros(n_nodes,num_sensors);
 
 A_matrix = A(x);
 
@@ -283,7 +303,7 @@ afterEach(q, @(t) update_progress(t));
         progress.count = progress.count + 1;
         progress.times(progress.count) = t;
 
-        est_time_left = (numSensors - progress.count) * mean(progress.times(1:progress.count));
+        est_time_left = (num_sensors - progress.count) * mean(progress.times(1:progress.count));
 
         fprintf('\r ETA %s: %.1f (s)', progress.label, est_time_left);
         % fprintf('%.1f (s)\n', );
@@ -292,21 +312,32 @@ afterEach(q, @(t) update_progress(t));
         end
     end
 
-times = zeros(numSensors,1);
+times = zeros(num_sensors,1);
 % Shared counter and total (accessible inside nested function)
-progress = struct('count', 0, 'total', numSensors,'times',times, 'label', 'solving lambda systems');
+progress = struct('count', 0, 'total', num_sensors,'times',times, 'label', 'solving lambda systems');
 
-parfor m = 1:numSensors
+% Jacobi preconditioner - matrix free
+d = sqrt(diag(A_matrix));        % vector of diagonal entries
 
+Mfun = @(x) x ./ d;              % left preconditioner  M^{-1} x
+Nfun = @(x) x ./ d;              % right preconditioner
+
+Gamma1_t = img.Gamma1.';
+Gamma2_t = img.Gamma2.';
+Gamma3_t = img.Gamma3.';
+
+% Incomplete Cholesky factorization preconditioner seems to be a bit faster
+% than Jacobi preconditioner. However, it breaks down when the
+% conductivities become negative
+% R = ichol(A_matrix);
+% Rt = R';
+
+parfor m = 1:num_sensors
     t_start = tic;
 
-    % Simple Jacobi preconditioner
-    L = sqrt(diag(diag(A_matrix)));
-    U = L;
-
-    [lambdaX(:,m),~,~] = pcg(A_matrix,-Gamma1(m,:)',1e-5,numel(x),L,U);
-    [lambdaY(:,m),~,~] = pcg(A_matrix,-Gamma2(m,:)',1e-5,numel(x),L,U);
-    [lambdaZ(:,m),~,~] = pcg(A_matrix,-Gamma3(m,:)',1e-5,numel(x),L,U);
+    [lambda1(:,m),~,~] = pcg(A_matrix,-Gamma1_t(:,m),1e-6,numel(x),Mfun,Nfun);
+    [lambda2(:,m),~,~] = pcg(A_matrix,-Gamma2_t(:,m),1e-6,numel(x),Mfun,Nfun);
+    [lambda3(:,m),~,~] = pcg(A_matrix,-Gamma3_t(:,m),1e-6,numel(x),Mfun,Nfun);
 
     if verbose
         send(q, toc(t_start));  % send elapsed time for this iteration
@@ -315,64 +346,130 @@ end
 
 t1 = tic;
 
-Gx_times_lambdaX = img.fwd_model.G.Gx*lambdaX;
-Gy_times_lambdaX = img.fwd_model.G.Gy*lambdaX;
-Gz_times_lambdaX = img.fwd_model.G.Gz*lambdaX;
+Gx_times_lambda1 = G.Gx*lambda1;
+Gy_times_lambda1 = G.Gy*lambda1;
+Gz_times_lambda1 = G.Gz*lambda1;
 
-Gx_times_lambdaY = img.fwd_model.G.Gx*lambdaY;
-Gy_times_lambdaY = img.fwd_model.G.Gy*lambdaY;
-Gz_times_lambdaY = img.fwd_model.G.Gz*lambdaY;
+Gx_times_lambda2 = G.Gx*lambda2;
+Gy_times_lambda2 = G.Gy*lambda2;
+Gz_times_lambda2 = G.Gz*lambda2;
 
-Gx_times_lambdaZ = img.fwd_model.G.Gx*lambdaZ;
-Gy_times_lambdaZ = img.fwd_model.G.Gy*lambdaZ;
-Gz_times_lambdaZ = img.fwd_model.G.Gz*lambdaZ;
+Gx_times_lambda3 = G.Gx*lambda3;
+Gy_times_lambda3 = G.Gy*lambda3;
+Gz_times_lambda3 = G.Gz*lambda3;
 
-Gx_times_u = img.fwd_model.G.Gx*u;
-Gy_times_u = img.fwd_model.G.Gy*u;
-Gz_times_u = img.fwd_model.G.Gz*u;
+Gx_times_u = G.Gx*u;
+Gy_times_u = G.Gy*u;
+Gz_times_u = G.Gz*u;
 
-for m = 1:numSensors
+mu_factor = mu0/(4*pi);
 
-    % Parenthisis are need, because I want to form the index vector and
-    % then correct by (d-1)*numSensors*numStim
-    ids_x = (m:numSensors:numStim*numSensors) + 0*numSensors*numStim;
-    ids_y = (m:numSensors:numStim*numSensors) + 1*numSensors*numStim;
-    ids_z = (m:numSensors:numStim*numSensors) + 2*numSensors*numStim;
+elemV = img.fwd_model.elem_volume(:);      % [numElems × 1]
 
-    dfdx_m = img.fwd_model.elem_volume.*(...
-        Gx_times_lambdaX(:,m).*Gx_times_u + ...
-        Gy_times_lambdaX(:,m).*Gy_times_u + ...
-        Gz_times_lambdaX(:,m).*Gz_times_u );
+% Expand elem_volume to cover stim × sensor
+elemV = reshape(elemV, [n_elem 1 1]);
+% Later this will broadcast to [numElems × numStim × numSensors]
 
-    dfdpx_m = mu0/(4*pi)*(...
-        -Rzt(:,m).*Gy_times_u+Ryt(:,m).*Gz_times_u);
+% Expand lambda and R terms to 3D
+GxL1 = reshape(Gx_times_lambda1, [n_elem 1 num_sensors]); % [: × 1 × numSensors]
+GyL1 = reshape(Gy_times_lambda1, [n_elem 1 num_sensors]);
+GzL1 = reshape(Gz_times_lambda1, [n_elem 1 num_sensors]);
 
-    dfdy_m = img.fwd_model.elem_volume.*(...
-        Gx_times_lambdaY(:,m).*Gx_times_u + ...
-        Gy_times_lambdaY(:,m).*Gy_times_u + ...
-        Gz_times_lambdaY(:,m).*Gz_times_u );
+% Expand lambda and R terms to 3D
+GxL2 = reshape(Gx_times_lambda2, [n_elem 1 num_sensors]); % [: × 1 × numSensors]
+GyL2 = reshape(Gy_times_lambda2, [n_elem 1 num_sensors]);
+GzL2 = reshape(Gz_times_lambda2, [n_elem 1 num_sensors]);
 
-    dfdpy_m = mu0/(4*pi)*(...
-        -Rxt(:,m).*Gz_times_u+Rzt(:,m).*Gx_times_u);
+% Expand lambda and R terms to 3D
+GxL3 = reshape(Gx_times_lambda3, [n_elem 1 num_sensors]); % [: × 1 × numSensors]
+GyL3 = reshape(Gy_times_lambda3, [n_elem 1 num_sensors]);
+GzL3 = reshape(Gz_times_lambda3, [n_elem 1 num_sensors]);
 
-    dfdz_m = img.fwd_model.elem_volume.*(...
-        Gx_times_lambdaZ(:,m).*Gx_times_u + ...
-        Gy_times_lambdaZ(:,m).*Gy_times_u + ...
-        Gz_times_lambdaZ(:,m).*Gz_times_u );
+% Expand u-terms to 3D
+GxU = reshape(Gx_times_u, [n_elem num_stim 1]); % [: × numStim × 1]
+GyU = reshape(Gy_times_u, [n_elem num_stim 1]);
+GzU = reshape(Gz_times_u, [n_elem num_stim 1]);
 
-    dfdpz_m = mu0/(4*pi)*(...
-        -Ryt(:,m).*Gx_times_u+Rxt(:,m).*Gy_times_u);
+% Compute all dfdx for all sensors+stim
+dfdx1 = elemV .* ( ...
+    GxL1.*GxU + ...
+    GyL1.*GyU + ...
+    GzL1.*GzU );
 
-    J(ids_x,:) = (dfdx_m + dfdpx_m)';
-    J(ids_y,:) = (dfdy_m + dfdpy_m)';
-    J(ids_z,:) = (dfdz_m + dfdpz_m)';
+dfdx2 = elemV .* ( ...
+    GxL2.*GxU + ...
+    GyL2.*GyU + ...
+    GzL2.*GzU );
+
+dfdx3 = elemV .* ( ...
+    GxL3.*GxU + ...
+    GyL3.*GyU + ...
+    GzL3.*GzU );
+
+% Compute all dfdp (also 3D)
+Rx_ = reshape(R.Rx', [n_elem 1 num_sensors]);
+Ry_ = reshape(R.Ry', [n_elem 1 num_sensors]);
+Rz_ = reshape(R.Rz', [n_elem 1 num_sensors]);
+
+% These are the derivatives with respect to sigma of the C components of the Gamma matrix,
+dCxdp = ( -Rz_.*GyU + Ry_.*GzU );
+dCydp = ( -Rx_.*GzU + Rz_.*GxU );
+dCzdp = ( -Ry_.*GxU + Rx_.*GyU );
+
+% The g matrix does not depend on sigma.
+g = zeros(num_sensors,3,3);
+for m = 1:numel(img.fwd_model.sensors)
+    g(m,:,:) = [...
+        img.fwd_model.sensors(m).axes.axis1;
+        img.fwd_model.sensors(m).axes.axis2;
+        img.fwd_model.sensors(m).axes.axis3];
 end
+
+% g: [num_sensors × 3 × 3]
+gx1 = reshape(g(:,1,1), [1 1 num_sensors]);
+gy1 = reshape(g(:,1,2), [1 1 num_sensors]);
+gz1 = reshape(g(:,1,3), [1 1 num_sensors]);
+
+gx2 = reshape(g(:,2,1), [1 1 num_sensors]);
+gy2 = reshape(g(:,2,2), [1 1 num_sensors]);
+gz2 = reshape(g(:,2,3), [1 1 num_sensors]);
+
+gx3 = reshape(g(:,3,1), [1 1 num_sensors]);
+gy3 = reshape(g(:,3,2), [1 1 num_sensors]);
+gz3 = reshape(g(:,3,3), [1 1 num_sensors]);
+
+dfdp1 = mu_factor*(gx1.*dCxdp + gy1.*dCydp + gz1.*dCzdp);
+
+dfdp2 = mu_factor*(gx2.*dCydp + gy2.*dCydp + gz2.*dCydp);
+
+dfdp3 = mu_factor*(gx3.*dCzdp + gy3.*dCzdp + gz3.*dCzdp);
+
+df1d = dfdx1 + dfdp1;   % size: [numElems × numStim × numSensors]
+df2d = dfdx2 + dfdp2;   % size: [numElems × numStim × numSensors]
+df3d = dfdx3 + dfdp3;   % size: [numElems × numStim × numSensors]
+
+% Now reshape to match J(ids,:)
+% permute to [numSensors × numStim × numElems]
+df1d = permute(df1d, [3 2 1]);
+df2d = permute(df2d, [3 2 1]);
+df3d = permute(df3d, [3 2 1]);
+
+% collapse first 2 dims → [numSensors*numStim × numElems]
+J1 = reshape(df1d, num_sensors*num_stim, n_elem);
+J2 = reshape(df2d, num_sensors*num_stim, n_elem);
+J3 = reshape(df3d, num_sensors*num_stim, n_elem);
+
+J = [J1;J2;J3];
 
 if verbose
     fprintf('\r Done. Took %d (s)\n',toc(t1));
 end
-return
+
 end
+
+
+
+
 
 %% FUNCTIONS: Jacobian-vector product (matrix-free)
 function y = jacobian_vec_product(img, x, A, v, select_sensor_axis, verbose)
