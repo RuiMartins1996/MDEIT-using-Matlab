@@ -1,7 +1,10 @@
-function [U,S,V] = rsvd(A,k)
+function [U,S,V] = rsvd(A,k,tol)
 % Implementation of randomized svd decomposition: https://gregorygundersen.com/blog/2019/01/17/randomized-svd/
 
 % INPUTS:
+
+
+% tol: tolerance for adaptive range finder
 
 % k : target rank
 
@@ -11,20 +14,24 @@ function [U,S,V] = rsvd(A,k)
 m = size(A,1);
 n = size(A,2);
 
-if nargin<2
-    use_adaptive_range_finder = false;
-    k = min(m,n);       % target rank
-else
+use_adaptive_range_finder = false;
+
+if nargin<3
+    tol = 1e-6;
+end
+
+if nargin>2
     use_adaptive_range_finder = true;
 end
 
 % For Gaussian test matrices, it is adequate to choose the oversampling parameter to be a small constant, 
 % such as p=5 or p=10. There is rarely any advantage to select p>k.
-p = 10;
+p = 5;
 
 if use_adaptive_range_finder
     % Algorithm 3: Algorithm 3: Iterative construction of Q
-    Q = adaptive_range_finder(A, 1e-5, 20);
+    maxit = min(size(A));
+    Q = adaptive_range_finder(A, tol, maxit);
 else
     % % Algorithm 2: Randomized range finder
     Omega = randn(n, k+p);
@@ -48,19 +55,23 @@ function Q = adaptive_range_finder(A, tol, maxit)
 % tol   : relative tolerance
 % maxit : safety cap on iterations
 
-[m,~] = size(A);
-Q = zeros(m,0);
+[m, ~] = size(A);
+Q = zeros(m, maxit);  % preallocate
+col = 0;
 
+Omega = randn(size(A,2),maxit);
 for i = 1:maxit
+
     % 1. Random probe
-    omega = randn(size(A,2),1);
+    omega = Omega(:,i);
 
     % 2. Apply A
     y = A * omega;
 
     % 3. Orthogonalize
-    if ~isempty(Q)
-        y = y - Q*(Q'*y);
+    if col > 0
+        y = y - Q(:,1:col)*(Q(:,1:col)'*y);  % orthogonalize
+        y = y - Q(:,1:col)*(Q(:,1:col)'*y);  % optional double pass
     end
 
     % 4. Normalize
@@ -71,13 +82,22 @@ for i = 1:maxit
     q = y / ny;
 
     % 5. Expand basis
-    Q = [Q, q];
+    col = col + 1;
+
+    Q(:,col) = q;
 
     % 6. Check residual norm (cheap estimator)
-    if estimate_residual(A, Q) < tol
-        break
+    if mod(i,100) == 0
+        residual = estimate_residual(A, Q(:,1:col));
+        fprintf('Iter %i/%i| r = %2.2g, tol = %2.2g\n',i,maxit,residual,tol);
+        if residual < tol
+            break
+        end
     end
 end
+
+Q = Q(:,1:col);  % trim at the end
+
 end
 
 
@@ -85,9 +105,10 @@ function err = estimate_residual(A, Q)
 nr = 3;  % number of random probes
 err = 0;
 
+G = randn(size(A,2),nr);
+
 for j = 1:nr
-    g = randn(size(A,2),1);
-    r = A*g - Q*(Q'*(A*g));
+    r = A*G(:,j) - Q*(Q'*(A*G(:,j)));
     err = max(err, norm(r));
 end
 end
