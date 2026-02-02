@@ -1,6 +1,10 @@
-function plot_sensors(mdl)
+function plot_sensors(mdl,plot_sensor_axis)
 
 assert(isfield(mdl,'type'),'Model must have "type" field');
+
+if nargin<2
+    plot_sensor_axis = false;
+end
 
 switch mdl.type
     case 'image'
@@ -26,17 +30,19 @@ for m = 1:numel(mdl.sensors)
     sensors_axis_2 = mdl.sensors(m).axes.axis2;
     sensors_axis_3 = mdl.sensors(m).axes.axis3;
 
-    quiver3(...
-        xc,yc,zc,...
-        sensors_axis_1(1),sensors_axis_1(2),sensors_axis_1(3));
+    if plot_sensor_axis
+        quiver3(...
+            xc,yc,zc,...
+            sensors_axis_1(1),sensors_axis_1(2),sensors_axis_1(3));
 
-    quiver3(...
-        xc,yc,zc,...
-        sensors_axis_2(1),sensors_axis_2(2),sensors_axis_2(3));
+        quiver3(...
+            xc,yc,zc,...
+            sensors_axis_2(1),sensors_axis_2(2),sensors_axis_2(3));
 
-    quiver3(...
-        xc,yc,zc,...
-        sensors_axis_3(1),sensors_axis_3(2),sensors_axis_3(3));
+        quiver3(...
+            xc,yc,zc,...
+            sensors_axis_3(1),sensors_axis_3(2),sensors_axis_3(3));
+    end
 
     str = strcat('S(',num2str(m),')');
     text(xc,yc,zc,str,'HorizontalAlignment','left','FontSize',8);
