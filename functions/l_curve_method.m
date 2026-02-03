@@ -1,4 +1,4 @@
-function s = l_curve_method(fmdl_reconstruction,imgh,imgi,recon_mode,lambda_vec)
+function s = l_curve_method(fmdl_reconstruction,imgh,imgi,recon_mode,lambda_vector)
 
 valid_modes = {'eit', 'mdeit1', 'mdeit3'};
 if ~ismember(recon_mode, valid_modes)
@@ -12,16 +12,16 @@ else
 end
 
 if nargin<3
-    lambda_vec = logspace(-2,1,5);
+    lambda_vector = logspace(-2,1,5);
 else
-    assert(all(lambda_vec>0),'lambda_vec must be positive')
+    assert(all(lambda_vector>0),'lambda_vec must be positive')
 end
 
 fprintf('Running L-curve method ...\n')
 
 % Allocate for residual and solution norms
-residual_norms = zeros(1,length(lambda_vec));
-x_norms = zeros(1,length(lambda_vec));
+residual_norms = zeros(1,length(lambda_vector));
+x_norms = zeros(1,length(lambda_vector));
 
 % Forward solve img to get data
 if strcmp(recon_mode,'mdeit1')
@@ -63,15 +63,15 @@ imdl.recon_mode = recon_mode;
 imdl.recon_type = "difference";
 imdl.jacobian_bkgnd = struct('value',max(imgh.elem_data));
 
-for i = 1:length(lambda_vec)
+for i = 1:length(lambda_vector)
     
-    imdl.hyperparameter = struct('value',lambda_vec(i));
+    imdl.hyperparameter = struct('value',lambda_vector(i));
 
     img_output = inv_solve_mdeit(imdl,datah,datai,J);
     data_diff = datai-datah;
     d_sigma = img_output.elem_data;
     
-    figure('Name',strcat(recon_mode,'| lambda = ',num2str(lambda_vec(i))));
+    figure('Name',strcat(recon_mode,'| lambda = ',num2str(lambda_vector(i))));
     show_fem(img_output);
     pause(1e-10)
 
@@ -91,33 +91,31 @@ xnorm = x_norms(:);
 [rs, idx] = sort(r);
 xs = xnorm(idx);
 
-% --- Option: use log-log scale if doing L-curve analysis ---
+% Log-log scale for L-curve
 lr = log(rs);
 lx = log(xs);
 
-% Fit a cubic smoothing spline: p controls smoothness (0–1)
-p = 0.9;  % try values 0.8–0.99 depending on noise
-pp = csaps(lr, lx, p);
-
-% Evaluate on a dense grid
+% --- Use monotone-preserving piecewise cubic interpolation ---
 lr_dense = linspace(min(lr), max(lr), 200);
-lx_dense = fnval(pp, lr_dense);
+lx_dense = interp1(lr, lx, lr_dense, 'pchip');
 
-% Derivatives of the spline
-d1 = fnval(fnder(pp,1), lr_dense);
-d2 = fnval(fnder(pp,2), lr_dense);
+% --- Numerical derivatives using finite differences ---
+d1 = gradient(lx_dense, lr_dense);          % first derivative
+d2 = gradient(d1, lr_dense);               % second derivative
 
-% Curvature formula: κ = |y''| / (1 + y'^2)^(3/2)
+% --- Curvature formula: κ = |y''| / (1 + y'^2)^(3/2)
 kappa = abs(d2) ./ (1 + d1.^2).^(3/2);
 
-% Interpolate curvature values from lr_dense to the original lr points
+% --- Interpolate curvature back to original lr points if needed
 kappa_interp = interp1(lr_dense, kappa, lr, 'pchip');
 
 % Find maximum curvature (corner of L-curve)
 [~, imax] = max(kappa_interp);
 opt_lr = lr_dense(imax);
 opt_lx = lx_dense(imax);
-lambda_opt = lambda_vec(imax);
+
+% Assuming lambda_vector corresponds to lr_dense
+lambda_opt = lambda_vector(imax);
 
 % Convert back to linear scale
 opt_r = exp(opt_lr);
@@ -127,6 +125,7 @@ fprintf('Optimal residual norm = %.4e\n', opt_r);
 fprintf('Optimal solution norm = %.4e\n', opt_x);
 fprintf('Maximum curvature = %.4e\n', kappa_interp(imax));
 fprintf('Optimal hyperparameter = %.4e\n', lambda_opt);
+
 
 % Output
 
@@ -138,41 +137,6 @@ s.x_norms = x_norms;
 s.optimal_id = imax;
 
 end
-
-
-
-%% FUNCTIONS
-
-% function ltdAdsigma = computeLambdaTimesDaDp(img,lambda)
-% 
-% numNodes = size(img.fwd_model.nodes,1);
-% numElements = size(img.fwd_model.elems,1);
-% 
-% numNodesPerElement = size(img.fwd_model.elems(1,:),2);
-% idj = zeros(numNodesPerElement*numElements,1);
-% idk = zeros(numNodesPerElement*numElements,1);
-% values = zeros(numNodesPerElement*numElements,1);
-% 
-% for k = 1:numElements
-%     nodeIds = img.fwd_model.elems(k,:);
-% 
-%     %No need to recompute the gradients at this element, they are stored in
-%     %the G matrices
-% 
-%     Gk = diag(lambda(nodeIds))*(...
-%         img.fwd_model.G.Gx(k,nodeIds)'*img.fwd_model.G.Gx(k,nodeIds)+...
-%         img.fwd_model.G.Gy(k,nodeIds)'*img.fwd_model.G.Gy(k,nodeIds)+...
-%         img.fwd_model.G.Gz(k,nodeIds)'*img.fwd_model.G.Gz(k,nodeIds));
-% 
-%     ids = numNodesPerElement*(k-1)+1:numNodesPerElement*k;
-%     idj(ids) = nodeIds;
-%     idk(ids) = k;
-%     % dont forget to multiply by volume
-%     values(ids) = img.fwd_model.elem_volume(k)*sum(Gk,1);
-% end
-% 
-% ltdAdsigma = sparse(idj,idk,values,numNodes,numElements);
-% end
 
 %% FUNCTIONS
 function out = M(img,sigma)
