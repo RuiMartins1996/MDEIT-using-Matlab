@@ -83,9 +83,9 @@ while numOfIterations<=maxIterations
     % Update solution
     xk = xk1;
 
-    num_of_sensors = N/3;
-    plot3(x0(1:num_of_sensors),x0(num_of_sensors+1:2*num_of_sensors),x0(2*num_of_sensors+1:3*num_of_sensors),'r.','MarkerSize',3)
-    pause(1e-10)
+    % num_of_sensors = N/3;
+    % plot3(x0(1:num_of_sensors),x0(num_of_sensors+1:2*num_of_sensors),x0(2*num_of_sensors+1:3*num_of_sensors),'r.','MarkerSize',3)
+    % pause(1e-10)
 
     %Compute cost function at new xk for next iteration
     fk = f(xk);

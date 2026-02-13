@@ -7,10 +7,13 @@ numOfIterations = 0;
 colors = ['r','g','b','y','k','c','m'];
 
 color = colors(randi(length(colors)));
+
+fprintf(' iter        f(x)          |g(x)| \n')
+fprintf('-------------------------------------\n')
+
 for k = 1:maxIterations
 
     numOfIterations = numOfIterations+1;
-    plot(xk(1),xk(2),'o','MarkerSize',5,'Color',color);
 
     %Compute gradient at xk
     dfx = grad(xk);
@@ -19,17 +22,21 @@ for k = 1:maxIterations
     end
 
     %Stopping criterion
-    if f(xk)<tol
+    fk = f(xk);
+    if fk<tol
         break
     end
 
     %Search direction
     pk = -dfx;
 
-    quiver(xk(1),xk(2),pk(1),pk(2),'k-')
-    pause(1e-10)
+    % quiver(xk(1),xk(2),pk(1),pk(2),'k-')
+    % pause(1e-10)
 
-    alphak = backtrackingLineSearch(f,grad,pk,xk);
+    % alphak = backtrackingLineSearch(f,grad,pk,xk);
+    alphak = 5e3;
+
+    fprintf('%3d %16.8f %16.8f\n',numOfIterations,fk,norm(dfx));
 
     xk = xk + alphak*pk;
 end
