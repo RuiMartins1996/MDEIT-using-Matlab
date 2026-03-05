@@ -21,7 +21,10 @@ data_folder = strcat(script_folder ,'\data');
 clc;
 rng(1)
 
-%% Define the characteristic scales in SI units
+
+file_name = strcat(script_folder,'/data/data_m_l.mat');
+
+
 
 %% Model parameters 
 z0 = 0.0058; %(Ohm m^2) is the contact impedance from the CEM article 58 Ohm cm^2
@@ -35,7 +38,7 @@ J0 = I0/(l0^2);
 
 model_parameters = create_default_3d_model_parameters(l0, z0, sigma0, I0);
 
-model_parameters.maxsz =  1e-1/l0;
+model_parameters.maxsz =  model_parameters.radius/5;
 
 % A material defines the geometry of that material inside the domain, not
 % its properties, like conductivity.
@@ -49,16 +52,11 @@ meas = [0 3]; %for EIT, skip2 measurement protocol was used
 options = {};
 
 %% Assign the parameters for several models (should create utility functions for this)
-num_of_repetitions_eit = 45;
+num_of_repetitions_eit = 15;
 
 num_of_repetitions_mdeit = 5;
 
 background_conductivity = 3.28e-1/sigma0;  %page 163 mentions a saline solution (NaCl + water) at 0.2% mass concentration, but can't find data for that conductivity, check notes
-
-min_maxsz = 0.5e-3/l0;
-max_maxsz = 0.5e-3/l0;
-n_steps = 1;
-
 
 %% Sweep model_parameters over multiple cylindrical radius
 
@@ -66,7 +64,10 @@ n_steps = 1;
 % num_of_rings_array = 1:6;
 
 num_of_electrodes_per_ring_array = [4:16]; 
-num_of_rings_array = 1:5;
+num_of_rings_array = 1:6;
+
+% num_of_electrodes_per_ring_array = [4]; 
+% num_of_rings_array = [1,2,3,4];
 
 [E, R] = ndgrid(num_of_electrodes_per_ring_array, num_of_rings_array);
 combinations = [E(:)'; R(:)'];
@@ -77,9 +78,12 @@ combinations = [combinations;num_of_sensors];
 % [15,3,45]
 % [13,5,65]
 
-remove ={...
-    [15,3,45],...
-    [13,5,65]};
+
+% remove ={...
+%     [15,3,45],...
+%     [13,5,65]};
+
+remove = {};
 
 for n = 1:numel(remove)
     id = find(all(ismember(combinations,remove{n}'),1));
@@ -118,112 +122,111 @@ std_forward_solve_mdeit = zeros(numel(model_parameters_array),1);
 
 n_elem_vector = zeros(numel(model_parameters_array),1);
 
-nnz_A_vector = zeros(numel(model_parameters_array),1);
-n_nodes_vector = zeros(numel(model_parameters_array),1);
 
-mesh_created_successfully = true;
-maxTime = 2;
-
-% % Start parallel pool if not already running
-% pool = gcp('nocreate'); 
-% if isempty(pool)
-%     pool = parpool; 
-% end
-% 
-% % Run EIDORS startup on all workers
-% spmd
-%     % Extract just the folder
-%     script_folder = 'C:\Users\RuiMartins\Desktop\MDEIT-using-Matlab-main\studies\jacobian_computation_complexity';
-% 
-%     % Dont output model folder here, re-use the one defined outside par
-%     % pool
-%     prepare_workspace(script_folder);
-% end
-% 
-% clc;
-
-mesh_created_successfully = true;
+if isfile(file_name)
+    loaded = load(file_name, 'T');
+    T = loaded.T;  % retrieve the table
+else
+    % Initialize empty table if it doesn't exist yet
+    T = table( ...
+        [],[],[],[],[],[],[],[],[],[],[],[],...
+        'VariableNames', { ...
+        'num_sensors','num_electrodes_per_ring','num_rings', ...
+        'times_mdeit','times_eit', ...
+        'std_mdeit','std_eit', ...
+        'time_forward_solve_eit','std_forward_solve_eit', ...
+        'time_forward_solve_mdeit','std_forward_solve_mdeit', ...
+        'n_elems'} ...
+        );
+end
 
 fprintf('Computing Jacobian times\n');
+
 for n = 1:numel(model_parameters_array)
     fprintf('Iteration %i of %i\n',n,numel(model_parameters_array));
     model_parameters = model_parameters_array(n);
 
-    if mesh_created_successfully
-        fmdl = fmdls_all{n};
-        stimulation = mk_stim_patterns(numel(fmdl.electrode),1,inj,meas,options,current_amplitude);
-        fmdl.stimulation = stimulation;
+    fmdl = fmdls_all{n};
+    stimulation = mk_stim_patterns(numel(fmdl.electrode),1,inj,meas,options,current_amplitude);
+    fmdl.stimulation = stimulation;
 
-        n_elem_vector(n) = size(fmdl.elems,1);
+    % logical index of matching rows
+    existing_idx = (T.num_sensors == model_parameters.numOfSensors) & ...
+        (T.num_electrodes_per_ring == model_parameters.numOfElectrodesPerRing) & ...
+        (T.num_rings == model_parameters.numOfRings) & ...
+        (T.n_elems == size(fmdl.elems,1));
 
-        imgh = mk_image_mdeit(fmdl,background_conductivity);
-
-        temp1 = zeros(1,num_of_repetitions_mdeit);
-        temp2 = zeros(1,num_of_repetitions_eit);
-
-        for t = 1:num_of_repetitions_mdeit
-            tic
-            r1 = fwd_solve_mdeit(imgh);
-            temp1(t) = toc;
-        end
-
-        for t = 1:num_of_repetitions_eit
-            tic
-            r2 = fwd_solve(imgh);
-            temp2(t) = toc;
-        end
-
-        time_forward_solve_mdeit(n) = sum(temp1)/num_of_repetitions_mdeit;
-        std_forward_solve_mdeit(n) = std(temp1);
-        time_forward_solve_eit(n) = sum(temp2)/num_of_repetitions_eit;
-        std_forward_solve_eit(n) = std(temp2);
-
-        t_eit = 0;
-        temp = zeros(1,num_of_repetitions_eit);
-
-        for t = 1:num_of_repetitions_eit
-            tic;
-
-            J_EIT = calc_jacobian(imgh);
-            t_eit = t_eit + toc;
-            temp(t) = toc;
-        end
-
-        times_eit(n) = t_eit/num_of_repetitions_eit;
-        std_eit(n) = std(temp);
-
-        lambdatimesdAdp = @(lambda) computeLambdaTimesDaDp(imgh,lambda);
-        A = @(sigma) M(imgh,sigma);
-
-        n_nodes_vector(n) = size(A(imgh.elem_data),1);
-        nnz_A_vector(n) = nnz(A(imgh.elem_data));
-
-        t_mdeit = 0;
-        temp = zeros(1,num_of_repetitions_mdeit);
-        for t = 1:num_of_repetitions_mdeit
-            tic;
-            J_MDEIT = ...
-                calc_jacobian_mdeit(imgh,imgh.elem_data,lambdatimesdAdp,A,'mdeit1',3);
-            t_mdeit = t_mdeit + toc;
-            temp(t) = toc;
-        end
-
-        times_mdeit(n) = t_mdeit/num_of_repetitions_mdeit;
-        std_mdeit(n) = std(temp);
+    if any(existing_idx)
+        fprintf('Entry for [%d, %d, %d,%d] already exists.\n', ...
+            model_parameters.numOfSensors, model_parameters.numOfElectrodesPerRing, model_parameters.numOfRings,size(fmdl.elems,1));
+        skip_iteration = true;   % flag to skip computation
+    else
+        skip_iteration = false;
     end
+    
+    if not(skip_iteration)
+    n_elem_vector(n) = size(fmdl.elems,1);
 
-    % file_name = strcat(script_folder,'/data/data');
-    %
-    % save(file_name,...
-    %     "times_mdeit","times_eit","std_mdeit","std_eit",...
-    %     "time_forward_solve_eit","std_forward_solve_eit",...
-    %     "time_forward_solve_mdeit","std_forward_solve_mdeit",...
-    %     "n_elem_vector","nnz_A_vector","n_nodes_vector");
+    imgh = mk_image_mdeit(fmdl,background_conductivity);
+
+    % FORWARD SOLVE: Compute mean execution time and standard deviation
+    [time_forward_solve_mdeit(n), std_forward_solve_mdeit(n)] = ...
+        compute_execution_time(@fwd_solve_mdeit, num_of_repetitions_mdeit, imgh);
+
+    [time_forward_solve_eit(n), std_forward_solve_eit(n)] = ...
+        compute_execution_time(@fwd_solve, num_of_repetitions_eit, imgh);
+    
+    
+    % JACOBIAN SOLVE: Compute mean execution time and standard deviation
+    [times_eit(n),std_eit(n)] = compute_execution_time(@calc_jacobian, num_of_repetitions_eit, imgh);
+    
+    lambdatimesdAdp = @(lambda) computeLambdaTimesDaDp(imgh,lambda);
+    A = @(sigma) M(imgh,sigma);
+
+    [times_mdeit(n),std_mdeit(n)] = ...
+        compute_execution_time(@ calc_jacobian_mdeit, num_of_repetitions_mdeit, imgh,imgh.elem_data,lambdatimesdAdp,A,'mdeit1',3);
+
+    new_row = table( ...
+        model_parameters.numOfSensors,model_parameters.numOfElectrodesPerRing,model_parameters.numOfRings,...
+        times_mdeit(n), times_eit(n), ...
+        std_mdeit(n), std_eit(n), ...
+        time_forward_solve_eit(n), std_forward_solve_eit(n), ...
+        time_forward_solve_mdeit(n), std_forward_solve_mdeit(n), ...
+        n_elem_vector(n),...
+        'VariableNames', { ...
+        'num_sensors','num_electrodes_per_ring','num_rings', ...
+        'times_mdeit','times_eit', ...
+        'std_mdeit','std_eit', ...
+        'time_forward_solve_eit','std_forward_solve_eit', ...
+        'time_forward_solve_mdeit','std_forward_solve_mdeit', ...
+        'n_elems'} ...
+        );
+
+    T = [T; new_row];
+    end
 end
+
+save(file_name, "T");
 
 fprintf('Done!\n')
 
-fprintf('Time MDEIT: %.2d +- %.2d\n',times_mdeit(end),std_mdeit(end))
+
+%% FUNCTION: compute_execution_time
+function [mean_time,std_dev] = compute_execution_time(func, repetitions, varargin)
+    
+    times = zeros(1,repetitions);
+    
+    tic
+    for t = 1:repetitions
+        tic
+        func(varargin{:});
+        times(t) = toc;
+    end
+
+    mean_time = sum(times) / repetitions;
+    std_dev = std(times);
+end
+
 
 
 %% PLOTS
@@ -249,6 +252,14 @@ colors = [228,26,28;... %Colors for figure representation
 figure;
 cla;
 
+% The fit for EIT time seems for to be log(t) = m*log(L^2) + b - > t =
+% exp(mlog(L^2)+b) = exp(mlog(L^2)exp(b) = exp(log((L^2)^m)exp(b) =
+% (L^2)^m*exp(b)
+p_eit_alternative = polyfit(log(electrode_count.^2),log(times_eit),1);
+
+x_alt = linspace(min(electrode_count.*electrode_count),max(electrode_count.*electrode_count));
+y_plot_alt = x_alt.^(p_eit_alternative(1))*exp(p_eit_alternative(2));
+
 % EIT Jacobian computation time plot
 subplot(2,2,1)
 hold on
@@ -267,6 +278,7 @@ SS_tot = sum((y(:) - mean(y(:))).^2);
 R2 = 1 - (SS_res / SS_tot);
 
 plot(x,y_plot,'.','Color',colors(4,:),'LineWidth',2);
+plot(x_alt,y_plot_alt,'.','Color',colors(6,:),'LineWidth',2);
 hold off
 msg = strcat('$ R^2 = ',num2str(R2),'$');
 legend('EIT',msg,'interpreter','latex','location','southeast');
@@ -379,7 +391,7 @@ R2 = 1 - (SS_res / SS_tot);
 errorbar(sensor_count_clean,y_clean,std_clean,'o','MarkerSize',5,'Color',colors(1,:))
 plot(x,y_plot,'.','Color',colors(2,:),'LineWidth',2);
 
-plot(sensor_count(out_id),time_forward_solve_mdeit(out_id),'k*')
+% plot(sensor_count(out_id),time_forward_solve_mdeit(out_id),'k*')
 hold off
 msg = strcat('$ R^2 = ',num2str(R2),'$');
 legend('$1$-axis MDEIT',msg,'interpreter','latex','location','southeast');
@@ -393,7 +405,6 @@ title('MDEIT forward solve','Interpreter','latex')
 set(gca,'YScale','log');
 set(gca,'XScale','log');
 
-%% FUNCTION 
 
 
 
@@ -412,40 +423,3 @@ Ad = s_mat.E(numNodes+1:end,numNodes+1:end);
 out = Ac-Ae*inv(Ad)*Ae';
 end
 
-
-%% FUNCTION 
-function avg_neigh = average_node_neighbours(fmdl)
-    % fmdl.nodes : [n_nodes x dim]
-    % fmdl.elems : [n_elems x n_vertex_per_elem]
-
-    elems = fmdl.elems;
-    n_nodes = size(fmdl.nodes, 1);
-
-    % Build adjacency list
-    neighbours = cell(n_nodes,1);
-
-    for el = 1:size(elems,1)
-        verts = elems(el,:);
-        % all unique unordered node pairs in this element
-        pairs = nchoosek(verts,2);
-
-        % add each pair to adjacency
-        for k = 1:size(pairs,1)
-            i = pairs(k,1);
-            j = pairs(k,2);
-            neighbours{i}(end+1) = j;
-            neighbours{j}(end+1) = i;
-        end
-    end
-
-    % remove duplicates and count
-    deg = zeros(n_nodes,1);
-    for i = 1:n_nodes
-        deg(i) = numel(unique(neighbours{i}));
-    end
-
-    % compute average number of neighbours
-    avg_neigh = mean(deg);
-
-    fprintf('Average number of node neighbours: %.3f\n', avg_neigh);
-end

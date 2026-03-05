@@ -1,0 +1,218 @@
+clc;clear all; close all;
+
+%% Prepare workspace
+% Get the full path of the current script
+fullpath = mfilename('fullpath');
+% Extract just the folder
+script_folder = fileparts(fullpath);
+cd(script_folder);
+
+% Have to add the functions path manually so prepare_workspace runs
+grandparent_folder =fileparts(fileparts(script_folder));
+addpath(genpath(fullfile(grandparent_folder,'functions')));
+
+model_folder = prepare_workspace(script_folder);
+
+data_folder = strcat(script_folder ,'\data');
+
+clc;
+rng(1)
+
+colors = [228,26,28;... %Colors for figure representation
+    55,126,184;...
+    77,175,74;...
+    152,78,163;...
+    255,127,0;...
+    255,255,51;...
+    166,86,40;...
+    247,129,191;
+    202,178,214;
+    106,61,154]/255;
+
+%%
+
+file_name = strcat(script_folder,'/data/data_m_l.mat');
+
+if isfile(file_name)
+    loaded = load(file_name, 'T');
+    T = loaded.T;  % retrieve the table
+else
+    error('No data file found named %s\n',file_name);
+end
+
+
+
+
+%% Fetch data from table
+
+electrode_count = T.num_electrodes_per_ring.*T.num_rings;
+sensor_count = T.num_sensors;
+
+times_eit = T.times_eit;
+times_mdeit = T.times_mdeit;
+std_eit = T.std_eit;
+std_mdeit = T.std_mdeit;
+time_forward_solve_eit = T.time_forward_solve_eit;
+time_forward_solve_mdeit = T.time_forward_solve_mdeit;
+std_forward_solve_eit = T.std_forward_solve_eit;
+std_forward_solve_mdeit = T.std_forward_solve_mdeit;
+n_elems = T.n_elems;
+
+
+%% PLOTS
+
+% SHOULD PACK THIS INTO A FUNCTION!!!!!!!!
+figure;
+cla;
+
+% EIT Jacobian computation time plot
+subplot(2,2,1)
+hold on
+errorbar(electrode_count.^2,times_eit,std_eit,'o','MarkerSize',5,'Color',colors(3,:))
+
+% THE LAST THREE POINTS ARE OUTLIERS! BECAUSE OF EIDORS REMOVING CACHE. FOR
+% NOW, REMOVE THEM FROM FIT.
+mask = 1:length(times_eit)-3;
+
+p_eit = polyfit(electrode_count(mask).^2,times_eit(mask),1);
+x = linspace(min(electrode_count.^2),max(electrode_count.^2));
+
+y_plot = polyval(p_eit,x);
+y_fit = polyval(p_eit,electrode_count(mask).^2);
+y = times_eit(mask);
+
+SS_res = sum((y(:) - y_fit(:)).^2);
+SS_tot = sum((y(:) - mean(y(:))).^2);
+
+R2 = 1 - (SS_res / SS_tot);
+
+plot(x,y_plot,'.','Color',colors(4,:),'LineWidth',2);
+hold off
+msg = strcat('$ R^2 = ',num2str(R2),'$');
+legend('EIT',msg,'interpreter','latex','location','southeast');
+
+xlabel('$L^2$','Interpreter','latex');
+ylabel('$t(s)$','Interpreter','latex')
+box on;
+grid on;grid minor;
+
+title('EIT Jacobian computation','Interpreter','latex')
+
+set(gca,'YScale','log');
+set(gca,'XScale','log');
+axis square
+
+
+% MDEIT Jacobian computation time plot
+subplot(2,2,2)
+hold on
+errorbar(electrode_count.*sensor_count,times_mdeit,std_mdeit,'d','MarkerSize',5,'Color',colors(5,:))
+
+p_mdeit = polyfit(electrode_count.*sensor_count,times_mdeit,1);
+x = linspace(min(electrode_count.*sensor_count),max(electrode_count.*sensor_count));
+
+y_plot = polyval(p_mdeit,x);
+y_fit = polyval(p_mdeit,electrode_count.*sensor_count);
+y = times_mdeit;
+
+SS_res = sum((y(:) - y_fit(:)).^2);
+SS_tot = sum((y(:) - mean(y(:))).^2);
+
+R2 = 1 - (SS_res / SS_tot);
+
+plot(x,y_plot,'.','Color',colors(4,:),'LineWidth',2);
+hold off
+msg = strcat('$ R^2 = ',num2str(R2),'$');
+legend('$1$-axis MDEIT',msg,'interpreter','latex','location','southeast');
+
+set(gca,'YScale','log');
+set(gca,'XScale','log');
+
+title('$1$-axis MDEIT Jacobian computation','Interpreter','latex')
+
+xlabel('$M \times L$','Interpreter','latex');
+ylabel('$t(s)$','Interpreter','latex')
+box on;
+grid on;grid minor;
+axis square
+
+
+% EIT forward computation time plot
+subplot(2,2,3)
+hold on
+errorbar(electrode_count,time_forward_solve_eit,std_forward_solve_eit,'o','MarkerSize',5,'Color',colors(3,:))
+
+p_eit = polyfit(electrode_count,time_forward_solve_eit,1);
+x = linspace(min(electrode_count),max(electrode_count));
+
+y_plot = polyval(p_eit,x);
+y_fit = polyval(p_eit,electrode_count);
+y = time_forward_solve_eit;
+
+SS_res = sum((y(:) - y_fit(:)).^2);
+SS_tot = sum((y(:) - mean(y(:))).^2);
+
+R2 = 1 - (SS_res / SS_tot);
+
+plot(x,y_plot,'.','Color',colors(4,:),'LineWidth',2);
+hold off
+msg = strcat('$ R^2 = ',num2str(R2),'$');
+legend('EIT',msg,'interpreter','latex','location','southeast');
+
+xlabel('$L$','Interpreter','latex');
+ylabel('$t(s)$','Interpreter','latex')
+box on;
+grid on;grid minor;
+
+title('EIT forward solve','Interpreter','latex')
+
+set(gca,'YScale','log');
+set(gca,'XScale','log');
+axis square
+
+% MDEIT forward computation time plot
+subplot(2,2,4)
+hold on
+% errorbar(sensor_count,time_forward_solve_mdeit,std_forward_solve_mdeit,'o','MarkerSize',5,'Color',colors(1,:))
+
+p_mdeit = polyfit(sensor_count,time_forward_solve_mdeit,1);
+x = linspace(min(sensor_count),max(sensor_count));
+
+y_fit = polyval(p_mdeit,sensor_count);
+y = time_forward_solve_mdeit;
+
+% Remove outliers
+residual = y(:)-y_fit(:);
+outliers = abs(residual) > 3*std(residual);
+
+sensor_count_clean = sensor_count(~outliers);
+y_clean = y(~outliers);
+std_clean = std_forward_solve_mdeit(~outliers);
+p_mdeit_clean = polyfit(sensor_count_clean,y_clean,1);
+
+y_plot = polyval(p_mdeit_clean,x);
+y_fit = polyval(p_mdeit_clean,sensor_count_clean);
+
+SS_res = sum((y_clean(:) - y_fit(:)).^2);
+SS_tot = sum((y_clean(:) - mean(y_clean(:))).^2);
+
+R2 = 1 - (SS_res / SS_tot);
+
+errorbar(sensor_count_clean,y_clean,std_clean,'o','MarkerSize',5,'Color',colors(5,:))
+plot(x,y_plot,'.','Color',colors(4,:),'LineWidth',2);
+
+% plot(sensor_count(out_id),time_forward_solve_mdeit(out_id),'k*')
+hold off
+msg = strcat('$ R^2 = ',num2str(R2),'$');
+legend('$1$-axis MDEIT',msg,'interpreter','latex','location','southeast');
+
+xlabel('$M$','Interpreter','latex');
+ylabel('$t(s)$','Interpreter','latex')
+box on;
+grid on;grid minor;
+
+title('MDEIT forward solve','Interpreter','latex')
+set(gca,'YScale','log');
+set(gca,'XScale','log');
+axis square
+
