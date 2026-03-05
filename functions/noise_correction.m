@@ -1,23 +1,14 @@
-function sigma_std = noise_correction(imgh,imgi,Jh,lambda,noisy_data_generator,num_noise_repetitions)
+function sigma_std = noise_correction(imgh,imgi,Jh,lambda,noisy_data_generator,num_noise_repetitions,U,S,V)
 
-% Solve Tykhonov regularized normal equations using SVD for noisy inputs
-
-[U,S,V] = svd(Jh,'econ');
-
-n_elem = size(Jh,2);
-M = zeros(n_elem,num_noise_repetitions);
-
-for t = 1:num_noise_repetitions
-    
-    fprintf('Solving for noise realization %i\n',t);
-    
-    data_noisy = noisy_data_generator(imgh,imgi);
-    
-    sv = diag(S)+lambda./diag(S);
-    sigma_noisy = V*diag(1./sv)*U'*data_noisy;
-    
-    M(:,t) = sigma_noisy;
+if nargin <7
+    [U,S,V] = svd(Jh,'econ');
 end
+
+data_noisy = noisy_data_generator(imgh,imgi,num_noise_repetitions);
+
+s  = diag(S);
+sv = s + lambda./s;
+M = V * diag(1./sv) * U' * data_noisy;
 
 sigma_std = std(M,[],2);
 
