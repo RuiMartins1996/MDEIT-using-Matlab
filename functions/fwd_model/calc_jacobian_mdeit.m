@@ -74,6 +74,7 @@ function J = calc_jacobian_1axis(img,A,select_sensor_axis)
 
 mu0 = img.fwd_model.mu0;
 
+n_nodes = size(img.fwd_model.nodes,1);
 n_elem = size(img.fwd_model.elems,1);
 
 num_stim = numel(img.fwd_model.stimulation);
@@ -107,10 +108,31 @@ u = fwd_solve(img);
 u = u.volt;
 
 % Solve the adjoint problem for each sensor to get lambda vectors
-A_matrix = A(img.elem_data);
-
 GammaT = Gamma.';
-lambda = A_matrix \ (-GammaT);
+
+A_matrix = A(img.elem_data);
+reciprocal_cond_estimate = 1 / condest(A_matrix);
+
+% If matrix is ill-conditioned, fall back to pcg method
+if reciprocal_cond_estimate < 1e-15 % Numerically singular
+    
+    lambda = zeros(n_nodes,num_sensors);
+    
+    % Jacobi preconditioner - matrix free
+    d = sqrt(diag(A_matrix));        % vector of diagonal entries
+
+    Mfun = @(x) x ./ d;              % left preconditioner  M^{-1} x
+    Nfun = @(x) x ./ d;              % right preconditioner
+
+    tol = 1e-10;
+    num_elements = numel(img.elem_data);
+    for m = 1:num_sensors
+        [lambda(:,m),~,~] = pcg(A_matrix,-GammaT(:,m),tol,num_elements,Mfun,Nfun);
+    end
+
+else
+    lambda = A_matrix \ (-GammaT);
+end
 
 Gx_times_lambda = G.Gx*lambda;
 Gy_times_lambda = G.Gy*lambda;
@@ -187,7 +209,7 @@ end
 function [Jx,Jy,Jz] = calc_jacobian_3axis(img,A)
 
 mu0 = img.fwd_model.mu0;
-
+n_nodes = size(img.fwd_model.nodes,1);
 n_elem = size(img.fwd_model.elems,1);
 
 num_stim = numel(img.fwd_model.stimulation);
@@ -207,17 +229,42 @@ Gamma3 = img.Gamma3;
 u = fwd_solve(img);
 u = u.volt;
 
-A_matrix = A(img.elem_data);
-
 Gamma1T = Gamma1.';
 Gamma2T = Gamma2.';
 Gamma3T = Gamma3.';
 
-% Solve the adjoint problem for each sensor to get lambda vectors
+A_matrix = A(img.elem_data);
+reciprocal_cond_estimate = 1 / condest(A_matrix);
 
-lambdaX = A_matrix \ (-Gamma1T);
-lambdaY = A_matrix \ (-Gamma2T);
-lambdaZ = A_matrix \ (-Gamma3T);
+% If matrix is ill-conditioned, fall back to pcg method
+if reciprocal_cond_estimate < 1e-15 % Numerically singular
+    
+    lambdaX = zeros(n_nodes,num_sensors);
+    lambdaY = zeros(n_nodes,num_sensors);
+    lambdaZ = zeros(n_nodes,num_sensors);
+    
+    % Jacobi preconditioner - matrix free
+    d = sqrt(diag(A_matrix));        % vector of diagonal entries
+
+    Mfun = @(x) x ./ d;              % left preconditioner  M^{-1} x
+    Nfun = @(x) x ./ d;              % right preconditioner
+
+    tol = 1e-10;
+    num_elements = numel(img.elem_data);
+
+    % Solve the adjoint problem for each sensor to get lambda vectors
+    parfor m = 1:num_sensors
+        [lambdaX(:,m),~,~] = pcg(A_matrix,-Gamma1T(:,m),tol,num_elements,Mfun,Nfun);
+        [lambdaY(:,m),~,~] = pcg(A_matrix,-Gamma2T(:,m),tol,num_elements,Mfun,Nfun);
+        [lambdaZ(:,m),~,~] = pcg(A_matrix,-Gamma3T(:,m),tol,num_elements,Mfun,Nfun);
+    end
+else
+    % Solve the adjoint problem for each sensor to get lambda vectors
+    lambdaX = A_matrix \ (-Gamma1T);
+    lambdaY = A_matrix \ (-Gamma2T);
+    lambdaZ = A_matrix \ (-Gamma3T);
+end
+
 
 Gx_times_lambda_X = G.Gx*lambdaX;
 Gy_times_lambda_X = G.Gy*lambdaX;
