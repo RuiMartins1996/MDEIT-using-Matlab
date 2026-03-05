@@ -35,7 +35,9 @@ maxsz_reconstruction = 0.03;
 
 background_conductivity = 3.28e-1/sigma0;  %page 163 mentions a saline solution (NaCl + water) at 0.2% mass concentration, but can't find data for that conductivity, check notes
 
-min_maxsz = 0.5e-3/l0;
+
+% min_maxsz = 0.5e-3/l0;
+min_maxsz = 1e-3/l0;
 max_maxsz = 10e-3/l0;
 n_steps = 20;
 %% Define forward model (2D real tank experiment)
@@ -196,6 +198,17 @@ fprintf('Time MDEIT: %.2d +- %.2d\n',times_mdeit(end),std_mdeit(end))
 
 
 %% PLOTS
+
+colors = [228,26,28;... %Colors for figure representation
+    55,126,184;...
+    77,175,74;...
+    152,78,163;...
+    255,127,0;...
+    255,255,51;...
+    166,86,40;...
+    247,129,191;
+    202,178,214;
+    106,61,154]/255;
 
 figure('Position',[100,100,1000,500]);
 cla;
