@@ -1,6 +1,23 @@
-function [J,img] = calc_jacobian_mdeit(img,x,lambdatimesdAdp,A,recon_mode,select_sensor_axis)
+function [J,img] = calc_jacobian_mdeit(img,x,lambdatimesdAdp,A,recon_mode,select_sensor_axis,verbose)
 
-check_input(A,recon_mode);
+if nargin <7
+    verbose = false;
+else
+    assert(verbose==true || verbose == false,'Must be boolean');
+end
+
+valid_modes = {'mdeit1', 'mdeit3','eit'};
+
+if ~ismember(recon_mode, valid_modes)
+    error('my_inv_solve: invalid recon_mode "%s". Must be''mdeit1'', or ''mdeit3''.', recon_mode);
+end
+
+if strcmp(recon_mode,'eit')
+    J = calc_jacobian_eit(img,x);
+    return;
+end
+
+assert(isa(A, 'function_handle'),'A must be a function handle');
 
 if isfield(img,'jacobian')
     J = img.jacobian;
@@ -9,14 +26,13 @@ end
 
 switch recon_mode
     case 'eit'
-        J = calc_jacobian_eit(img,x);
-
+        
     case 'mdeit1'
-        J = calc_jacobian_1axis(img,A,select_sensor_axis);
+            J = calc_jacobian_1axis(img,A,select_sensor_axis);
 
     case 'mdeit3'
-        [Jx,Jy,Jz] = calc_jacobian_3axis(img,A);
-        J = [Jx;Jy;Jz];
+            [Jx,Jy,Jz] = calc_jacobian_3axis(img,A);
+    J = [Jx;Jy;Jz];
 end
 
 size_in_megabytes = numel(J)*8/1e6;
@@ -29,16 +45,13 @@ end
 
 end
 
-function check_input(A,recon_mode)
 
-assert(isa(A, 'function_handle'),'A must be a function handle');
 
-valid_modes = {'mdeit1', 'mdeit3','eit'};
-if ~ismember(recon_mode, valid_modes)
-    error('my_inv_solve: invalid recon_mode "%s". Must be''mdeit1'', or ''mdeit3''.', recon_mode);
-end
 
-end
+
+
+
+
 
 %% Diagonostics
 function out = same_up_to_quantile(y1,y2,q)
@@ -58,6 +71,15 @@ else
     out = false;
 end
 end
+
+
+
+
+
+
+
+
+
 
 
 %% FUNCTIONS: calc_jacobian for EIT
