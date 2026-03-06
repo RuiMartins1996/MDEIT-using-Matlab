@@ -86,6 +86,10 @@ x = linspace(min(n_elems(fit_data_points)),max(n_elems(fit_data_points)));
 % plot(x,10^p_eit(2)*x.^p_eit(1),'LineStyle','--','Color',colors(2,:))
 plot(x,10^p_mdeit(2)*x.^p_mdeit(1),'LineStyle','--','Color',colors(4,:))
 
+
+time_to_compute = 3600;
+number_of_elements_for_time_to_compute = 10^((log10(time_to_compute) - p_mdeit(2))/p_mdeit(1));
+
 hold off
 
 % msg1 = strcat('EIT $(m = ',num2str(p_eit(1)),'$)'); 
@@ -119,3 +123,4 @@ ylabel('$t(s)$','Interpreter','latex')
 axis([min_x,max_x,min_y,max_y])
 
 title('Jacobian computation time log-scale')
+
