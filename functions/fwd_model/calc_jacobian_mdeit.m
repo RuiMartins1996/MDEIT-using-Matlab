@@ -19,13 +19,14 @@ switch recon_mode
         J = [Jx;Jy;Jz];
 end
 
-size_in_megabytes = numel(J)*8/1e6;
-
-if size_in_megabytes>10
-    warning("Jacobian larger than 10Mb. Skipping storing in img struct")
-else
-    img.jacobian = J;
-end
+% Always recompute, do no store Jacobian ever
+% size_in_megabytes = numel(J)*8/1e6;
+% 
+% if size_in_megabytes>10
+%     warning("Jacobian larger than 10Mb. Skipping storing in img struct")
+% else
+%     img.jacobian = J;
+% end
 
 end
 

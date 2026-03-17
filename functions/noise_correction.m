@@ -1,5 +1,8 @@
 function sigma_std = noise_correction(imgh,imgi,Jh,lambda,noisy_data_generator,num_noise_repetitions,U,S,V)
 
+% imgh and imgi are for data generation, so they should correspond to a
+% fine model, not a coarse one.
+
 if nargin <7
     [U,S,V] = svd(Jh,'econ');
 end

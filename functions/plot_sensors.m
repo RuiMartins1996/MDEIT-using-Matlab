@@ -41,14 +41,14 @@ dim = size(mdl.nodes,2);
 
 switch dim
     case 2
-        plot_sensors_2d(h,mdl,c,mark);
+        plot_sensors_2d(h,mdl,plot_sensor_axis,c,mark);
     case 3
-        plot_sensors_3d(h,mdl,c,mark);
+        plot_sensors_3d(h,mdl,plot_sensor_axis,c,mark);
 end
 
 end
 
-function plot_sensors_3d(h,mdl,c,mark)
+function plot_sensors_3d(h,mdl,plot_sensor_axis,c,mark)
 %Compute the bounding box of sensor positions ( for setting up axis)
 max_x = max(mdl.nodes(:,1));
 min_x = min(mdl.nodes(:,1));
@@ -105,7 +105,7 @@ hold off
 end
 
 
-function plot_sensors_2d(h,mdl,c,mark)
+function plot_sensors_2d(h,mdl,plot_sensor_axis,c,mark)
 
 %Compute the bounding box of sensor positions ( for setting up axis)
 max_x = max(mdl.nodes(:,1));

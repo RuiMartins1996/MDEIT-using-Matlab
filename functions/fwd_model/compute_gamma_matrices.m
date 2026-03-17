@@ -49,14 +49,14 @@ expectedSize = [num_sensors, num_nodes];
 
 % Check for existing fields and reuse if available
 if isfield(img, 'Gamma1') && ~isempty(img.Gamma1)
-    if not(isequal(size(img.GammaX), expectedSize))
+    if not(isequal(size(img.Gamma1), expectedSize))
         error('Expected size for Gamma matrix is wrong')
     end
 end
 
 % Check for existing fields and reuse if available
 if isfield(img, 'Gamma2') && ~isempty(img.Gamma2)
-    if not(isequal(size(img.GammaX), expectedSize))
+    if not(isequal(size(img.Gamma2), expectedSize))
         error('Expected size for Gamma matrix is wrong')
     end
 end
@@ -64,7 +64,7 @@ end
 
 % Check for existing fields and reuse if available
 if isfield(img, 'Gamma3') && ~isempty(img.Gamma3)
-    if not(isequal(size(img.GammaX), expectedSize))
+    if not(isequal(size(img.Gamma3), expectedSize))
         error('Expected size for Gamma matrix is wrong')
     end
 end
