@@ -15,6 +15,11 @@ model_folder = prepare_workspace(script_folder);
 
 rng(1);
 
+%% First of all, lets find the number of measurements that maximizes the number of discared singular values
+
+% Do this by hand
+
+
 %% Model parameters 
 z0 = 0.0058; %(Ohm m^2) is the contact impedance from the CEM article 58 Ohm cm^2
 l0 = 40e-3; %(m) the tank radius
@@ -27,19 +32,33 @@ J0 = I0/(l0^2);
 
 model_parameters = create_default_3d_model_parameters(l0, z0, sigma0, I0);
 
+% Geometry
 model_parameters.height = 3;
 
-model_parameters.maxsz = min(model_parameters.height,model_parameters.radius); %changed later anyway
-
-model_parameters.numOfElectrodesPerRing = 8;
+% Electrodes
+model_parameters.numOfElectrodesPerRing = 6;
 model_parameters.numOfRings = 4;
-model_parameters.numOfSensors = 8*4;
-model_parameters.sensorRadius = model_parameters.radius*1.5;
+% Sensors
+model_parameters.numOfSensors = model_parameters.numOfElectrodesPerRing*model_parameters.numOfRings;
+
+model_parameters.isCylindrical = false;
+model_parameters.sensorRadius = 3.5*model_parameters.radius;
+
+% CHANGED HERE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+% model_parameters.isCylindrical = true;
+% model_parameters.sensorRadius = 1.5*model_parameters.radius;
+
+
+
+% Material/anomaly
 model_parameters.material.type = 'spherical';
-model_parameters.material.position = [0 0 0.5*model_parameters.height];
+% model_parameters.material.position = [0*model_parameters.radius 0 0.5*model_parameters.height];
+
+model_parameters.material.position = [0.5*model_parameters.radius 0 0.5*model_parameters.height];
 
 % model_parameters.material.position(1) = 0.95*(model_parameters.radius-model_parameters.material.radius);
 % model_parameters.material.position(3) = 0.5*model_parameters.height;
+
 
 background_conductivity = 3.28e-1/sigma0;
 anomaly_conductivity = background_conductivity*1.1;
@@ -57,7 +76,7 @@ meas = [0 3]; %for EIT, skip2 measurement protocol was used
 options = {};
 
 num_noise_repetitions = 30;
-SNRdb = 100;
+SNRdb = 1;
 %% Simulation parameters
 dim = 3;            %if doing 1-axis, which dimmension?
 
@@ -144,13 +163,13 @@ J_eit = calc_jacobian(imgh_reconstruction);
 %% Singular value decomposition of Jacobians
 fprintf('Computing SVDs\n')
 
-fprintf('SVD mdeit-x\n')
-[Ux,Sx,Vx] = svds(Jx,size(Jx,1));
-s_x = diag(Sx);
-
-fprintf('SVD mdeit-y\n')
-[Uy,Sy,Vy] = svds(Jy,size(Jy,1));
-s_y = diag(Sy);
+% fprintf('SVD mdeit-x\n')
+% [Ux,Sx,Vx] = svds(Jx,size(Jx,1));
+% s_x = diag(Sx);
+% 
+% fprintf('SVD mdeit-y\n')
+% [Uy,Sy,Vy] = svds(Jy,size(Jy,1));
+% s_y = diag(Sy);
 
 fprintf('SVD mdeit-z\n')
 [Uz,Sz,Vz] = svds(Jz,size(Jz,1));
@@ -163,55 +182,174 @@ s_xyz = diag(S);
 fprintf('SVD eit\n')
 [U_eit,S_eit,V_eit] = svds(J_eit,size(J_eit,1));
 s_eit = diag(S_eit);
-%%
-rank_x = sum(s_x>1e-12);
-rank_y = sum(s_y>1e-12);
-rank_z = sum(s_z>1e-12);
-rank_xyz = sum(s_xyz>1e-12);
-rank_eit =  sum(s_eit>1e-12);
 
-condition_number_x = s_x(1)/s_x(rank_x);
-condition_number_y = s_y(1)/s_y(rank_y);
+
+%%
+% rank_x = sum(s_x>1e-10);
+% rank_y = sum(s_y>1e-10);
+rank_z = sum(s_z>1e-10);
+rank_xyz = sum(s_xyz>1e-10);
+rank_eit =  sum(s_eit>1e-10);
+
+if size(J,2) == rank_xyz
+    warning('Number of elements is too small for the current number of measurements! The rank is the number of elements!')
+end
+
+% condition_number_x = s_x(1)/s_x(rank_x);
+% condition_number_y = s_y(1)/s_y(rank_y);
 condition_number_z = s_z(1)/s_z(rank_z);
 condition_number_xyz = s_xyz(1)/s_xyz(rank_xyz);
 condition_number_eit = s_eit(1)/s_eit(rank_eit);
 
-% Find the singular value of s_xyz closest to the the least singular value
-% of s_z
-min_id = find(abs(s_xyz-s_z(rank_z)) == min(abs(s_xyz-s_z(rank_z))));
+%% Truncate the singular values in multiple ways:
 
 ns = length(s_xyz);
 
+% Find the singular value of s_xyz closest to the the least singular value
+% of s_z
+id1 = find(abs(s_xyz-s_z(rank_z)) == min(abs(s_xyz-s_z(rank_z))));
+
+% Find the index of the sv of mdeit3 such that 50% of them are discarded
+id2 = truncate_at_percentage(s_xyz,50);
+
+% Find the index of the sv of mdeit3 such that 75% of them are discarded
+id3 = truncate_at_percentage(s_xyz,75);
+
+
+
+function id = truncate_at_percentage(s_mdeit3,target_percentange)
+
+get_rank = @(s) sum(s>1e-10);
+
+rank_mdeit3 = get_rank(s_mdeit3);
+
+left_limit = 1;
+right_limit = rank_mdeit3;
+
+% Use bissection method 
+id = (left_limit-1)+floor((right_limit-left_limit)/2);
+
+while 1
+    s_truncated = s_mdeit3(1:id);
+
+    rank_truncated = get_rank(s_truncated);
+    
+    num_of_discarded_sv = rank_mdeit3-rank_truncated;
+
+    rank_percentage = 100*(num_of_discarded_sv)/(rank_mdeit3);
+
+    if rank_percentage >= target_percentange
+        left_limit = id;
+    else
+        right_limit = id;
+    end
+
+    id_new = (left_limit-1) + floor((right_limit-left_limit)/2);
+    
+    %fprintf('id: %i,id_new: %i\n',id,id_new);
+
+    % Stopping criterion
+    if abs(id_new-id) == 1 || abs(id_new-id) == 0
+        break
+    end
+
+    id = id_new;
+
+end
+
+end
+
+%% Plot the truncation lines
 figure
 hold on
-plot(s_x,'rs','MarkerSize',3);
-plot(s_y,'go','MarkerSize',2);
 plot(s_z,'b*','MarkerSize',1);
 plot(s_xyz,'.');
-plot(s_eit,'.');
-plot(1:ns,s_xyz(min_id)*ones(ns,1),'b--');
+% Truncation line
+plot(1:ns,s_xyz(id1)*ones(ns,1),'b--');
+plot(1:ns,s_xyz(id2)*ones(ns,1),'r--');
+plot(1:ns,s_xyz(id3)*ones(ns,1),'--','Color',[52,87,49]/256);
 hold off
 set(gca,'YScale','log');
-legend('mdeit-x','mdeit-y','mdeit-z','mdeit-3','eit')
+legend('mdeit-z svs','mdeit-3 svs','Least mdeit-z sv','Discard 50% mdeit3 sv','Discard 75% mdeit3 sv')
 ylabel('$\sigma$','Interpreter','latex');
 
-axis([1 ns 1e-11 15])
+axis([1 ns 1e-9 1e-2])
 grid on;grid minor;box on;
 drawnow
 
+%% Truncate the singular values at ids
 
-%% Truncate the singular values at min_id
+% Truncate at id corresponding to least singular value of z-axis
+Un1 = U(:,1:id1);
+Vn1 = V(:,1:id1);
+Sn1 = S(1:id1,1:id1);
 
-Un = U(:,1:min_id);
-Vn = V(:,1:min_id);
-Sn = S(1:min_id,1:min_id);
+J_xyz_truncated_1 = Un1*Sn1*Vn1.';
 
-J_truncated = Un*Sn*Vn.';
+s_xyz_truncated_1 = diag(Sn1);
+rank_xyz_truncated_1 = sum(s_xyz_truncated_1>1e-10);
 
-s_xyz_truncated = diag(Sn);
-rank_xyz_truncated = sum(s_xyz_truncated>1e-12);
+condition_number_xyz_truncated = s_xyz_truncated_1(1)/s_xyz_truncated_1(rank_xyz_truncated_1);
 
-condition_number_xyz_truncated = s_xyz_truncated(1)/s_xyz_truncated(rank_xyz_truncated);
+fprintf('Discarded SV MDEIT3 (id = %i):\n\t %i (%2.2f %%) \n',id1,rank_xyz-rank_xyz_truncated_1,100*(rank_xyz-rank_xyz_truncated_1)/(rank_xyz));
+
+% Truncate at id corresponding to 50% of discarded SV for mdeit3
+Un2 = U(:,1:id2);
+Vn2 = V(:,1:id2);
+Sn2 = S(1:id2,1:id2);
+
+J_xyz_truncated_2 = Un2*Sn2*Vn2.';
+
+s_xyz_truncated_2 = diag(Sn2);
+rank_xyz_truncated_2 = sum(s_xyz_truncated_2>1e-10);
+condition_number_xyz_truncated = s_xyz_truncated_2(1)/s_xyz_truncated_2(rank_xyz_truncated_2);
+
+fprintf('Discarded SV MDEIT3 (id = %i):\n\t %i (%2.2f %%) \n',id2,rank_xyz-rank_xyz_truncated_2,100*(rank_xyz-rank_xyz_truncated_2)/(rank_xyz));
+% Find corresponding id for z-axis mdeit
+id2z = find(abs(s_xyz_truncated_2(end)-s_z) == min(abs(s_xyz_truncated_2(end)-s_z)));
+
+Un2z = Uz(:,1:id2z);
+Vn2z = Vz(:,1:id2z);
+Sn2z = Sz(1:id2z,1:id2z);
+
+J_z_truncated_2 =  Un2z*Sn2z*Vn2z.';
+
+s_z_truncated_2 = diag(Sn2z);
+
+rank_z_truncated_2 = sum(s_z_truncated_2>1e-10);
+condition_number_z_truncated_2 = s_z_truncated_2(1)/s_z_truncated_2(rank_z_truncated_2);
+
+fprintf('Discarded SV MDEIT1 (id = %i):\n\t %i (%2.2f %%) \n',id2z,rank_z-rank_z_truncated_2,100*(rank_z-rank_z_truncated_2)/(rank_z));
+
+
+% Truncate at id corresponding to 75% of discarded SV for mdeit3
+Un3 = U(:,1:id3);
+Vn3 = V(:,1:id3);
+Sn3 = S(1:id3,1:id3);
+
+J_xyz_truncated_3 = Un3*Sn3*Vn3.';
+
+s_xyz_truncated_3 = diag(Sn3);
+rank_xyz_truncated_3 = sum(s_xyz_truncated_3>1e-10);
+condition_number_xyz_truncated_3 = s_xyz_truncated_3(1)/s_xyz_truncated_3(rank_xyz_truncated_3);
+
+fprintf('Discarded SV MDEIT3 (id = %i):\n\t %i (%2.2f %%) \n',id3,rank_xyz-rank_xyz_truncated_3,100*(rank_xyz-rank_xyz_truncated_3)/(rank_xyz));
+% Find corresponding id for z-axis mdeit
+
+id3z = find(abs(s_xyz_truncated_3(end)-s_z) == min(abs(s_xyz_truncated_3(end)-s_z)));
+
+Un3z = Uz(:,1:id3z);
+Vn3z = Vz(:,1:id3z);
+Sn3z = Sz(1:id3z,1:id3z);
+
+J_z_truncated_3 =  Un3z*Sn3z*Vn3z.';
+
+s_z_truncated_3 = diag(Sn3z);
+
+rank_z_truncated_3 = sum(s_z_truncated_3>1e-10);
+condition_number_z_truncated_3 = s_z_truncated_3(1)/s_z_truncated_3(rank_z_truncated_3);
+
+fprintf('Discarded SV MDEIT1 (id = %i):\n\t %i (%2.2f %%) \n',id3z,rank_z-rank_z_truncated_3,100*(rank_z-rank_z_truncated_3)/(rank_z));
 
 %% Doing L-curve method
 
@@ -356,18 +494,37 @@ sigma = V*diag(1./temp)*U'*data;
 end
 
 
-fprintf('Mdeit-x\n')
-[lambda_opt_mdeit_x,sigma_mdeit_x_gcv] =...
-    generalized_cross_validation(Jx,dBx,lambda_vector,Ux,Sx,Vx);
-fprintf('Mdeit-y\n')
-[lambda_opt_mdeit_y,sigma_mdeit_y_gcv] =...
-    generalized_cross_validation(Jy,dBy,lambda_vector,Uy,Sy,Vy);
+% fprintf('Mdeit-x\n')
+% [lambda_opt_mdeit_x,sigma_mdeit_x_gcv] =...
+%     generalized_cross_validation(Jx,dBx,lambda_vector,Ux,Sx,Vx);
+% fprintf('Mdeit-y\n')
+% [lambda_opt_mdeit_y,sigma_mdeit_y_gcv] =...
+%     generalized_cross_validation(Jy,dBy,lambda_vector,Uy,Sy,Vy);
+
 fprintf('Mdeit-z\n')
 [lambda_opt_mdeit_z,sigma_mdeit_z_gcv] =...
     generalized_cross_validation(Jz,dBz,lambda_vector,Uz,Sz,Vz);
-fprintf('Mdeit-3 truncated\n')
-[lambda_opt_mdeit_3_truncated,sigma_mdeit_3_truncated_gcv] =...
-    generalized_cross_validation(J_truncated,dB,lambda_vector,Un,Sn,Vn);
+
+fprintf('Mdeit-1 truncated (id2z)\n')
+[lambda_opt_mdeit_z_truncated_2,sigma_mdeit_z_truncated_gcv_2] =...
+    generalized_cross_validation(J_z_truncated_2,dBz,lambda_vector,Un2z,Sn2z,Vn2z);
+
+fprintf('Mdeit-1 truncated (id3z)\n')
+[lambda_opt_mdeit_z_truncated_3,sigma_mdeit_z_truncated_gcv_3] =...
+    generalized_cross_validation(J_z_truncated_3,dBz,lambda_vector,Un3z,Sn3z,Vn3z);
+
+fprintf('Mdeit-3 truncated (id1)\n')
+[lambda_opt_mdeit_3_truncated_1,sigma_mdeit_3_truncated_gcv_1] =...
+    generalized_cross_validation(J_xyz_truncated_1,dB,lambda_vector,Un1,Sn1,Vn1);
+
+fprintf('Mdeit-3 truncated (id2)\n')
+[lambda_opt_mdeit_3_truncated_2,sigma_mdeit_3_truncated_gcv_2] =...
+    generalized_cross_validation(J_xyz_truncated_2,dB,lambda_vector,Un2,Sn2,Vn2);
+
+fprintf('Mdeit-3 truncated (id3)\n')
+[lambda_opt_mdeit_3_truncated_3,sigma_mdeit_3_truncated_gcv_3] =...
+    generalized_cross_validation(J_xyz_truncated_3,dB,lambda_vector,Un3,Sn3,Vn3);
+
 fprintf('Mdeit-3\n')
 [lambda_opt_mdeit_3,sigma_mdeit_3_gcv] =...
     generalized_cross_validation(J,dB,lambda_vector,U,S,V);
@@ -456,14 +613,25 @@ func_mdeit_3 = @(imgh,imgi,num_noise_repetitions) noisy_data_generator_mdeit_3(i
 
 fprintf('Doing noise correction\n');
 
-fprintf('Mdeit-x\n')
-std_sigma_mdeit_x = noise_correction(imgh,imgi,Jx,lambda_opt_mdeit_x,func_mdeit_x,num_noise_repetitions,Ux,Sx,Vx);
-fprintf('Mdeit-y\n')
-std_sigma_mdeit_y = noise_correction(imgh,imgi,Jy,lambda_opt_mdeit_y,func_mdeit_y,num_noise_repetitions,Uy,Sy,Vy);
+% fprintf('Mdeit-x\n')
+% std_sigma_mdeit_x = noise_correction(imgh,imgi,Jx,lambda_opt_mdeit_x,func_mdeit_x,num_noise_repetitions,Ux,Sx,Vx);
+% fprintf('Mdeit-y\n')
+% std_sigma_mdeit_y = noise_correction(imgh,imgi,Jy,lambda_opt_mdeit_y,func_mdeit_y,num_noise_repetitions,Uy,Sy,Vy);
+
 fprintf('Mdeit-z\n')
 std_sigma_mdeit_z = noise_correction(imgh,imgi,Jz,lambda_opt_mdeit_z,func_mdeit_z,num_noise_repetitions,Uz,Sz,Vz);
-fprintf('Mdeit-3 truncated\n')
-std_sigma_mdeit_3_truncated = noise_correction(imgh,imgi,J_truncated,lambda_opt_mdeit_3_truncated,func_mdeit_3,num_noise_repetitions,Un,Sn,Vn);
+fprintf('Mdeit-3 truncated (id1)\n')
+std_sigma_mdeit_3_truncated_1 = noise_correction(imgh,imgi,J_xyz_truncated_1,lambda_opt_mdeit_3_truncated_1,func_mdeit_3,num_noise_repetitions,Un1,Sn1,Vn1);
+fprintf('Mdeit-3 truncated (id2)\n')
+std_sigma_mdeit_3_truncated_2 = noise_correction(imgh,imgi,J_xyz_truncated_2,lambda_opt_mdeit_3_truncated_2,func_mdeit_3,num_noise_repetitions,Un2,Sn2,Vn2);
+fprintf('Mdeit-1 truncated (id2z)\n')
+std_sigma_mdeit_z_truncated_2 = noise_correction(imgh,imgi,J_z_truncated_2,lambda_opt_mdeit_z_truncated_2,func_mdeit_z,num_noise_repetitions,Un2z,Sn2z,Vn2z);
+fprintf('Mdeit-3 truncated (id3)\n')
+std_sigma_mdeit_3_truncated_3 = noise_correction(imgh,imgi,J_xyz_truncated_3,lambda_opt_mdeit_3_truncated_3,func_mdeit_3,num_noise_repetitions,Un3,Sn3,Vn3);
+fprintf('Mdeit-1 truncated (id3z)\n')
+std_sigma_mdeit_z_truncated_3 = noise_correction(imgh,imgi,J_z_truncated_3,lambda_opt_mdeit_z_truncated_3,func_mdeit_z,num_noise_repetitions,Un3z,Sn3z,Vn3z);
+
+
 fprintf('Mdeit-3\n')
 std_sigma_mdeit_3 = noise_correction(imgh,imgi,J,lambda_opt_mdeit_3,func_mdeit_3,num_noise_repetitions,U,S,V);
 
@@ -493,8 +661,9 @@ fprintf('Done\n');
 % sigma_gn_mdeit_3 = gauss_newton_solve(J,-dB,lambda_opt_mdeit_3);
 %% Figure
 
-figure('Position',[100,100,1000,600])
+figure('Position',[100,100,1300,600])
 
+num_of_subplots_per_row = 8;
 
 z_level = model_parameters.height/2;
 npoints= 128;
@@ -509,170 +678,254 @@ axis square;
 box on;
 end
 
+id_column = 1;
 % First row
-subplot(4,6,1)
-imgtemp = mk_image_mdeit(imgh_reconstruction);
-imgtemp.elem_data = sigma_mdeit_x_gcv;
-show_fem_transparent_edges(imgtemp);
-view(2)
-title('Mdeit-x','Interpreter','latex')
-
-subplot(4,6,2)
-imgtemp = mk_image_mdeit(imgh_reconstruction);
-imgtemp.elem_data = sigma_mdeit_y_gcv;
-show_fem_transparent_edges(imgtemp);
-view(2)
-title('Mdeit-y','Interpreter','latex')
-
-subplot(4,6,3)
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = mk_image_mdeit(imgh_reconstruction);
 imgtemp.elem_data = sigma_mdeit_z_gcv;
 show_fem_transparent_edges(imgtemp);
 view(2)
 title('Mdeit-z','Interpreter','latex')
+id_column = id_column+1;
 
-subplot(4,6,4)
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = mk_image_mdeit(imgh_reconstruction);
-imgtemp.elem_data = sigma_mdeit_3_truncated_gcv;
+imgtemp.elem_data = sigma_mdeit_z_truncated_gcv_2;
 show_fem_transparent_edges(imgtemp);
 view(2)
-title('Mdeit-3 truncated','Interpreter','latex')
+title('Mdeit-z truncated (id2)','Interpreter','latex')
+id_column = id_column+1;
 
-subplot(4,6,5)
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_z_truncated_gcv_3;
+show_fem_transparent_edges(imgtemp);
+view(2)
+title('Mdeit-z truncated (id3)','Interpreter','latex')
+id_column = id_column+1;
+
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_3_truncated_gcv_1;
+show_fem_transparent_edges(imgtemp);
+view(2)
+title('Mdeit-3 truncated (id1)','Interpreter','latex')
+id_column = id_column+1;
+
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_3_truncated_gcv_2;
+show_fem_transparent_edges(imgtemp);
+view(2)
+title('Mdeit-3 truncated (id2)','Interpreter','latex')
+id_column = id_column+1;
+
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_3_truncated_gcv_3;
+show_fem_transparent_edges(imgtemp);
+view(2)
+title('Mdeit-3 truncated (id3)','Interpreter','latex')
+id_column = id_column+1;
+
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = mk_image_mdeit(imgh_reconstruction);
 imgtemp.elem_data = sigma_mdeit_3_gcv;
 show_fem_transparent_edges(imgtemp);
 view(2)
 title('Mdeit-3 not truncated','Interpreter','latex')
+id_column = id_column+1;
 
-subplot(4,6,6)
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = imgi;
 show_fem_transparent_edges(imgtemp);
 view(2)
 title('Ground Truth','Interpreter','latex')
+id_column = id_column+1;
 
 
-
-subplot(4,6,6+1)
-imgtemp = mk_image_mdeit(imgh_reconstruction);
-imgtemp.elem_data = sigma_mdeit_x_gcv./std_sigma_mdeit_x;
-show_fem_transparent_edges(imgtemp);
-view(2)
-title('Mdeit-x','Interpreter','latex')
-
-subplot(4,6,6+2)
-imgtemp = mk_image_mdeit(imgh_reconstruction);
-imgtemp.elem_data = sigma_mdeit_y_gcv./std_sigma_mdeit_y;
-show_fem_transparent_edges(imgtemp);
-view(2);
-title('Mdeit-y','Interpreter','latex')
-
-subplot(4,6,6+3)
+% Second row
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = mk_image_mdeit(imgh_reconstruction);
 imgtemp.elem_data = sigma_mdeit_z_gcv./std_sigma_mdeit_z;
 show_fem_transparent_edges(imgtemp);
 view(2)
 title('Mdeit-z','Interpreter','latex')
+id_column = id_column+1;
 
-subplot(4,6,6+4)
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = mk_image_mdeit(imgh_reconstruction);
-imgtemp.elem_data = sigma_mdeit_3_truncated_gcv./std_sigma_mdeit_3_truncated;
+imgtemp.elem_data = sigma_mdeit_z_truncated_gcv_2./std_sigma_mdeit_z_truncated_2;
 show_fem_transparent_edges(imgtemp);
 view(2)
-title('Mdeit-3 truncated','Interpreter','latex')
+title('Mdeit-z truncated (id2)','Interpreter','latex')
+id_column = id_column+1;
 
-subplot(4,6,6+5)
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_z_truncated_gcv_3./std_sigma_mdeit_z_truncated_3;
+show_fem_transparent_edges(imgtemp);
+view(2)
+title('Mdeit-z truncated (id3)','Interpreter','latex')
+id_column = id_column+1;
+
+
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_3_truncated_gcv_1./std_sigma_mdeit_3_truncated_1;
+show_fem_transparent_edges(imgtemp);
+view(2)
+title('Mdeit-3 truncated (id1)','Interpreter','latex')
+id_column = id_column+1;
+
+
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_3_truncated_gcv_2./std_sigma_mdeit_3_truncated_2;
+show_fem_transparent_edges(imgtemp);
+view(2)
+title('Mdeit-3 truncated (id2)','Interpreter','latex')
+id_column = id_column+1;
+
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_3_truncated_gcv_3./std_sigma_mdeit_3_truncated_3;
+show_fem_transparent_edges(imgtemp);
+view(2)
+title('Mdeit-3 truncated (id2)','Interpreter','latex')
+id_column = id_column+1;
+
+
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = mk_image_mdeit(imgh_reconstruction);
 imgtemp.elem_data = sigma_mdeit_3_gcv./std_sigma_mdeit_3;
 show_fem_transparent_edges(imgtemp);
 view(2)
 title('Mdeit-3 not truncated','Interpreter','latex')
+id_column = id_column+1;
 
-subplot(4,6,6+6)
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = imgi;
 show_fem_transparent_edges(imgtemp);
 view(2);
 title('Ground Truth','Interpreter','latex')
+id_column = id_column+1;
 
 
-
-subplot(4,6,12+1)
-imgtemp = mk_image_mdeit(imgh_reconstruction);
-imgtemp.elem_data = sigma_mdeit_x_gcv;
-plot_image_slice(z_level,npoints,imgtemp);
-title('Mdeit-x','Interpreter','latex')
-
-subplot(4,6,12+2)
-imgtemp = mk_image_mdeit(imgh_reconstruction);
-imgtemp.elem_data = sigma_mdeit_y_gcv;
-plot_image_slice(z_level,npoints,imgtemp);
-title('Mdeit-y','Interpreter','latex')
-
-subplot(4,6,12+3)
+% Third row
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = mk_image_mdeit(imgh_reconstruction);
 imgtemp.elem_data = sigma_mdeit_z_gcv;
 plot_image_slice(z_level,npoints,imgtemp);
-
 title('Mdeit-z','Interpreter','latex')
+id_column = id_column+1;
 
-subplot(4,6,12+4)
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = mk_image_mdeit(imgh_reconstruction);
-imgtemp.elem_data = sigma_mdeit_3_truncated_gcv;
+imgtemp.elem_data = sigma_mdeit_z_truncated_gcv_2;
 plot_image_slice(z_level,npoints,imgtemp);
+title('Mdeit-z truncated (id2)','Interpreter','latex')
+id_column = id_column+1;
 
-title('Mdeit-3 truncated','Interpreter','latex')
 
-subplot(4,6,12+5)
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_z_truncated_gcv_3;
+plot_image_slice(z_level,npoints,imgtemp);
+title('Mdeit-z truncated (id3)','Interpreter','latex')
+id_column = id_column+1;
+
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_3_truncated_gcv_1;
+plot_image_slice(z_level,npoints,imgtemp);
+title('Mdeit-3 truncated (id1)','Interpreter','latex')
+id_column = id_column+1;
+
+
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_3_truncated_gcv_2;
+plot_image_slice(z_level,npoints,imgtemp);
+title('Mdeit-3 truncated (id2)','Interpreter','latex')
+id_column = id_column+1;
+
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_3_truncated_gcv_3;
+plot_image_slice(z_level,npoints,imgtemp);
+title('Mdeit-3 truncated (id3)','Interpreter','latex')
+id_column = id_column+1;
+
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = mk_image_mdeit(imgh_reconstruction);
 imgtemp.elem_data = sigma_mdeit_3_gcv;
 plot_image_slice(z_level,npoints,imgtemp);
-
 title('Mdeit-3 not truncated','Interpreter','latex')
+id_column = id_column+1;
 
-subplot(4,6,12+6)
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = imgi;
 plot_image_slice(z_level,npoints,imgtemp);
 title('Ground Truth','Interpreter','latex')
+id_column = id_column+1;
 
-
-
-subplot(4,6,18+1)
-imgtemp = mk_image_mdeit(imgh_reconstruction);
-imgtemp.elem_data = sigma_mdeit_x_gcv./std_sigma_mdeit_x;
-plot_image_slice(z_level,npoints,imgtemp);
-title('Mdeit-x','Interpreter','latex')
-
-subplot(4,6,18+2)
-imgtemp = mk_image_mdeit(imgh_reconstruction);
-imgtemp.elem_data = sigma_mdeit_y_gcv./std_sigma_mdeit_y;
-plot_image_slice(z_level,npoints,imgtemp);
-title('Mdeit-y','Interpreter','latex')
-
-subplot(4,6,18+3)
+% Fourth Row
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = mk_image_mdeit(imgh_reconstruction);
 imgtemp.elem_data =sigma_mdeit_z_gcv./std_sigma_mdeit_z;
 plot_image_slice(z_level,npoints,imgtemp);
-
 title('Mdeit-z','Interpreter','latex')
+id_column = id_column+1;
 
-subplot(4,6,18+4)
+
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = mk_image_mdeit(imgh_reconstruction);
-imgtemp.elem_data = sigma_mdeit_3_truncated_gcv./std_sigma_mdeit_3_truncated;
+imgtemp.elem_data =sigma_mdeit_z_truncated_gcv_2./std_sigma_mdeit_z_truncated_2;
 plot_image_slice(z_level,npoints,imgtemp);
+title('Mdeit-z truncated (id2)','Interpreter','latex')
+id_column = id_column+1;
 
-title('Mdeit-3 truncated','Interpreter','latex')
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data =sigma_mdeit_z_truncated_gcv_3./std_sigma_mdeit_z_truncated_3;
+plot_image_slice(z_level,npoints,imgtemp);
+title('Mdeit-z truncated (id3)','Interpreter','latex')
+id_column = id_column+1;
 
-subplot(4,6,18+5)
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_3_truncated_gcv_1./std_sigma_mdeit_3_truncated_1;
+plot_image_slice(z_level,npoints,imgtemp);
+title('Mdeit-3 truncated (id1)','Interpreter','latex')
+id_column = id_column+1;
+
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_3_truncated_gcv_2./std_sigma_mdeit_3_truncated_2;
+plot_image_slice(z_level,npoints,imgtemp);
+title('Mdeit-3 truncated (id2)','Interpreter','latex')
+id_column = id_column+1;
+
+subplot(4,num_of_subplots_per_row,id_column)
+imgtemp = mk_image_mdeit(imgh_reconstruction);
+imgtemp.elem_data = sigma_mdeit_3_truncated_gcv_3./std_sigma_mdeit_3_truncated_3;
+plot_image_slice(z_level,npoints,imgtemp);
+title('Mdeit-3 truncated (id3)','Interpreter','latex')
+id_column = id_column+1;
+
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = mk_image_mdeit(imgh_reconstruction);
 imgtemp.elem_data = sigma_mdeit_3_gcv./std_sigma_mdeit_3;
 plot_image_slice(z_level,npoints,imgtemp);
-
 title('Mdeit-3 not truncated','Interpreter','latex')
+id_column = id_column+1;
 
-subplot(4,6,18+6)
+subplot(4,num_of_subplots_per_row,id_column)
 imgtemp = imgi;
 plot_image_slice(z_level,npoints,imgtemp);
 title('Ground Truth','Interpreter','latex')
+id_column = id_column+1;
 
 %% Functions
 function out = M(img,sigma)
