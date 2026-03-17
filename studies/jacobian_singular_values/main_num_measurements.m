@@ -30,7 +30,7 @@ file_name_mdeit_3 = strcat(data_folder,'/singular_values_mdeit_3.mat');
 %% Define test parameters
 
 num_of_rings_vector = [4];
-num_of_electrodes_per_ring_vector = [3:9];
+num_of_electrodes_per_ring_vector = [7];
 
 [R, E] = ndgrid(num_of_rings_vector, num_of_electrodes_per_ring_vector);
 parameter_values = [R(:)'; E(:)'];
@@ -54,11 +54,16 @@ background_conductivity =  3.28e-1/sigma0;
 %Stimulation pattern was not the default. For now, edit it manually
 current_amplitude = 2.4e-3/I0;
 
-inj = [0 1]; %skip 0 pattern
-meas = [0 1]; %for EIT, skip0 measurement protocol was used
+inj = [0 3]; %skip 0 pattern
+meas = [0 3]; %for EIT, skip0 measurement protocol was used
 
 %% Create default model_parameters to prepare for sweep
 model_parameters = create_kai_3d_model_parameters(l0, z0, sigma0, I0);
+
+model_parameters.maxsz = model_parameters.radius/5;
+model_parameters.height = 3;
+model_parameters.sensorRadius = 3.5*model_parameters.radius;
+model_parameters.isCylindrical = false;
 
 %% Sweep model_parameters over parameter_values
 model_parameters_array = ...
@@ -228,6 +233,22 @@ for i = 1:length(fmdls)
     save(file_name_mdeit_z,'data_updated_mdeit_z');
     save(file_name_mdeit_3,'data_updated_mdeit_3');
 end
+
+%%
+figure
+hold on
+plot(s_mdeit_x);
+plot(s_mdeit_y);
+plot(s_mdeit_z);
+plot(s_mdeit_3);
+hold off
+legend('x','y','z','3');
+set(gca,'YScale','log')
+
+
+figure
+show_fem(imgh);
+plot_sensors(imgh);
 
 %% FUNCTIONS
 function out = M(img,sigma)
