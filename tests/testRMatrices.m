@@ -774,7 +774,7 @@ classdef testRMatrices < matlab.unittest.TestCase
 
             % finish
         end
-       
+
         function testCostFunctionGradientWithRespectToSensorPosition(testCase)
             %% Prepare workspace
             % Get the full path of the current script
@@ -855,13 +855,17 @@ classdef testRMatrices < matlab.unittest.TestCase
             % prior_mean = mean(img.elem_data);
             Gamma_prior = prior_std_deviation^2.*speye(n_elem,n_elem);
 
+
+            Gamma_prior_inv = inv(Gamma_prior);
+            Gamma_noise_inv = inv(Gamma_noise);
+
             %% Compare analytical and numerical computation of gradient
             A = @(x) M(img,x);
             delta = 1e-5;
 
             errorThresh = testCase.testParameters.errorThresh;
 
-            function dphidp_numerical = compute_cost_function_gradient_central_differences(img,A,dim,p,Gamma_prior,Gamma_noise,delta)
+            function dphidp_numerical = compute_cost_function_gradient_central_differences(img,A,dim,p,Gamma_prior_inv,Gamma_noise_inv,delta)
 
                 n_sensors = numel(img.fwd_model.sensors);
                 dphidp_numerical = zeros(1,n_sensors);
@@ -874,12 +878,12 @@ classdef testRMatrices < matlab.unittest.TestCase
 
                     % assign sensor locations is done inside
                     % compute_cost_function
-                    cost_m_plus = compute_cost_function(img,sensor_locations_local,Gamma_prior,Gamma_noise,A,dim);
+                    cost_m_plus = compute_cost_function_a_opt(img,sensor_locations_local,Gamma_prior_inv,Gamma_noise_inv,A,dim);
 
                     sensor_locations_local = sensor_locations_0_local;
                     sensor_locations_local(sensor_id,p) = sensor_locations_local(sensor_id,p) - delta;
 
-                    cost_m_minus = compute_cost_function(img,sensor_locations_local,Gamma_prior,Gamma_noise,A,dim);
+                    cost_m_minus = compute_cost_function_a_opt(img,sensor_locations_local,Gamma_prior_inv,Gamma_noise_inv,A,dim);
 
                     dphidp_numerical(sensor_id) = (cost_m_plus-cost_m_minus)/(2*delta);
                 end
@@ -889,11 +893,11 @@ classdef testRMatrices < matlab.unittest.TestCase
                 for p = 1:3
 
                     %Compute the gradient of the cost function analytically
-                    dphidp = compute_cost_function_gradient(...
-                        img,sensorLocations,Gamma_prior,Gamma_noise,A,dim,p);
+                    dphidp = compute_cost_function_gradient_a_opt(...
+                        img,sensorLocations,Gamma_prior_inv,Gamma_noise_inv ,A,dim,p);
 
                     %Compute the gradient of the cost function numerically with central-differences
-                    dphidp_numerical = compute_cost_function_gradient_central_differences(img,A,dim,p,Gamma_prior,Gamma_noise,delta);
+                    dphidp_numerical = compute_cost_function_gradient_central_differences(img,A,dim,p,Gamma_prior_inv,Gamma_noise_inv,delta);
 
                     err = norm(dphidp_numerical(:) - dphidp(:)) / norm(dphidp(:));
                     testCase.verifyTrue(all(err<errorThresh),sprintf('Analytical and numerical difference is more than %d (%%)\n',errorThresh));
@@ -902,8 +906,7 @@ classdef testRMatrices < matlab.unittest.TestCase
 
         end
 
-        function testAOptimality(testCase)
-            
+        function testCostFunctionGradientWithRespectToCylindricalCoordinates(testCase)
             %% Prepare workspace
             % Get the full path of the current script
             fullpath = mfilename('fullpath');
@@ -933,7 +936,7 @@ classdef testRMatrices < matlab.unittest.TestCase
 
             model_parameters.maxsz = max(model_parameters.height,model_parameters.radius)/5;
             model_parameters.numOfElectrodesPerRing = 4;
-            model_parameters.numOfSensors = 4;
+            model_parameters.numOfSensors = 2;
             model_parameters.sensorRadius = model_parameters.radius*1.5;
             model_parameters.material.type = 'spherical';
 
@@ -982,172 +985,1741 @@ classdef testRMatrices < matlab.unittest.TestCase
 
             % prior_mean = mean(img.elem_data);
             Gamma_prior = prior_std_deviation^2.*speye(n_elem,n_elem);
-            
-            %% Perform optimization with lbfgs
-            
+
+            Gamma_prior_inv = inv(Gamma_prior);
+            Gamma_noise_inv = inv(Gamma_noise);
+
+            %% Compare analytical and numerical computation of gradient
             A = @(x) M(img,x);
-            dim = 1;
+            delta = 1e-9;
 
-            % Gamma_prior is constant
-            % Gamma_noise is constant
-            % A is constant
-            % dim is constant
-            % img is constant, gets changed inside compute_cost_function
-            function out = f(img,x,Gamma_prior,Gamma_noise,A,dim)
+            errorThresh = testCase.testParameters.errorThresh;
 
-                sensor_locations = vector_to_sensor_locations(x);
-               
-                out = compute_cost_function(img,sensor_locations,Gamma_prior,Gamma_noise,A,dim);
-            
+            function [dphidr_numerical,dphidtheta_numerical,dphidz_numerical] = ...
+                    compute_cost_function_gradient_central_differences(img,A,dim,Gamma_prior_inv,Gamma_noise_inv,delta)
+
+                n_sensors = numel(img.fwd_model.sensors);
+                dphidr_numerical = zeros(1,n_sensors);
+                dphidtheta_numerical = zeros(1,n_sensors);
+                dphidz_numerical = zeros(1,n_sensors);
+
+                sensor_locations_0_local = fetch_sensor_locations(img);
+
+                % Derivative w.r.t. r
+                for sensor_id = 1:n_sensors
+                    sensor_locations_local = sensor_locations_0_local;
+
+                    rm =  sqrt(sensor_locations_local(sensor_id,1)^2+sensor_locations_local(sensor_id,2)^2);
+                    thetam = atan2(sensor_locations_local(sensor_id,2),sensor_locations_local(sensor_id,1));
+                    zm =  sensor_locations_local(sensor_id,3);
+
+                    % Positive delta
+                    sensor_locations_local(sensor_id,:) = ...
+                        [(rm+delta)*cos(thetam),(rm+delta)*sin(thetam),zm];
+
+                    cost_m_plus = compute_cost_function_a_opt(img,sensor_locations_local,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                    % Negative delta
+                    sensor_locations_local(sensor_id,:) = ...
+                        [(rm-delta)*cos(thetam),(rm-delta)*sin(thetam),zm];
+                    cost_m_minus = compute_cost_function_a_opt(img,sensor_locations_local,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                    dphidr_numerical(sensor_id) = (cost_m_plus-cost_m_minus)/(2*delta);
+                end
+
+                % Derivative w.r.t. theta
+                for sensor_id = 1:n_sensors
+                    sensor_locations_local = sensor_locations_0_local;
+
+                    rm =  sqrt(sensor_locations_local(sensor_id,1)^2+sensor_locations_local(sensor_id,2)^2);
+                    thetam = atan2(sensor_locations_local(sensor_id,2),sensor_locations_local(sensor_id,1));
+                    zm =  sensor_locations_local(sensor_id,3);
+
+                    % Positive delta
+                    sensor_locations_local(sensor_id,:) = ...
+                        [rm*cos(thetam+delta),rm*sin(thetam+delta),zm];
+
+                    cost_m_plus = compute_cost_function_a_opt(img,sensor_locations_local,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                    % Negative delta
+                    sensor_locations_local(sensor_id,:) = ...
+                        [rm*cos(thetam-delta),rm*sin(thetam-delta),zm];
+                    cost_m_minus = compute_cost_function_a_opt(img,sensor_locations_local,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                    dphidtheta_numerical(sensor_id) = (cost_m_plus-cost_m_minus)/(2*delta);
+                end
+
+                % Derivative w.r.t. z
+                for sensor_id = 1:n_sensors
+                    sensor_locations_local = sensor_locations_0_local;
+
+                    rm =  sqrt(sensor_locations_local(sensor_id,1)^2+sensor_locations_local(sensor_id,2)^2);
+                    thetam = atan2(sensor_locations_local(sensor_id,2),sensor_locations_local(sensor_id,1));
+                    zm =  sensor_locations_local(sensor_id,3);
+
+                    % Positive delta
+                    sensor_locations_local(sensor_id,:) = ...
+                        [rm*cos(thetam),rm*sin(thetam),zm+delta];
+
+                    cost_m_plus = compute_cost_function_a_opt(img,sensor_locations_local,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                    % Negative delta
+                    sensor_locations_local(sensor_id,:) = ...
+                        [rm*cos(thetam),rm*sin(thetam),zm-delta];
+                    cost_m_minus = compute_cost_function_a_opt(img,sensor_locations_local,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                    dphidz_numerical(sensor_id) = (cost_m_plus-cost_m_minus)/(2*delta);
+                end
             end
-            
-            function dphi = g(img,x,Gamma_prior,Gamma_noise,A,dim)
+
+            function [dphidr_complex,dphidtheta_complex,dphidz_complex] = ...
+                    compust_cost_function_gradient_complex(img,A,dim,Gamma_prior_inv,Gamma_noise_inv,delta)
+
+                n_stim = numel(img.fwd_model.stimulation);
+                n_sensors = numel(img.fwd_model.sensors);
+                n_elem = size(img.fwd_model.elems,1);
+
+                dphidr_complex = zeros(1,n_sensors);
+                dphidtheta_complex = zeros(1,n_sensors);
+                dphidz_complex = zeros(1,n_sensors);
+
+                sensor_locations_0_local = fetch_sensor_locations(img);
+
+                % Derivative with respect to r
+                for m = 1:numel(img.fwd_model.sensors)
+                    sensor_locations_local = sensor_locations_0_local;
+
+                    rm =  sqrt(sensor_locations_local(m,1)^2+sensor_locations_local(m,2)^2);
+                    thetam = atan2(sensor_locations_local(m,2),sensor_locations_local(m,1));
+                    zm =  sensor_locations_local(m,3);
+
+                    sensor_locations_local(m,:) = ...
+                        [(rm+1i*delta)*cos(thetam),(rm+1i*delta)*sin(thetam),zm];
+
+                    cost_perturbed = compute_cost_function_a_opt(img,sensor_locations_local,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                    dphidr_complex(m) = imag(cost_perturbed) / delta;
+                end
+
+                % Derivative with respect to theta
+                for m = 1:numel(img.fwd_model.sensors)
+                    sensor_locations_local = sensor_locations_0_local;
+
+                    rm =  sqrt(sensor_locations_local(m,1)^2+sensor_locations_local(m,2)^2);
+                    thetam = atan2(sensor_locations_local(m,2),sensor_locations_local(m,1));
+                    zm =  sensor_locations_local(m,3);
+
+                    sensor_locations_local(m,:) = ...
+                        [rm*cos(thetam+1i*delta),rm*sin(thetam+1i*delta),zm];
+
+                    cost_perturbed = compute_cost_function_a_opt(img,sensor_locations_local,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                    dphidtheta_complex(m) = imag(cost_perturbed) / delta;
+                end
+
+                % Derivative with respect toz
+                for m = 1:numel(img.fwd_model.sensors)
+                    sensor_locations_local = sensor_locations_0_local;
+
+                    rm =  sqrt(sensor_locations_local(m,1)^2+sensor_locations_local(m,2)^2);
+                    thetam = atan2(sensor_locations_local(m,2),sensor_locations_local(m,1));
+                    zm =  sensor_locations_local(m,3);
+
+                    sensor_locations_local(m,:) = ...
+                        [rm*cos(thetam),rm*sin(thetam),zm+1i*delta];
+
+                    cost_perturbed = compute_cost_function_a_opt(img,sensor_locations_local,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                    dphidz_complex(m) = imag(cost_perturbed) / delta;
+                end
+            end
+
+            function [dphidr,dphidtheta,dphidz] = compute_cost_function_gradient(img,A,dim,Gamma_prior_inv,Gamma_noise_inv)
 
                 n_sensors = numel(img.fwd_model.sensors);
 
-                sensor_locations = vector_to_sensor_locations(x);
+                sensor_locations = fetch_sensor_locations(img);
+
+                rm = zeros(n_sensors,1);
+                thetam = zeros(n_sensors,1);
+                zm = zeros(n_sensors,1);
+
+                for m = 1:n_sensors
+                    rm(m) = sqrt(sensor_locations(m,1)^2+sensor_locations(m,2)^2);
+                    thetam(m) = atan2(sensor_locations(m,2),sensor_locations(m,1));
+                    zm(m) = sensor_locations(m,3);
+                end
+
+
+                dphidp = compute_cost_function_gradient_a_opt_optimized(...
+                    img,sensor_locations,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                dphidx = dphidp(1,:);
+                dphidy = dphidp(2,:);
+                dphidz = dphidp(3,:);
+
+                dphidr = cos(thetam)'.*dphidx+sin(thetam)'.*dphidy;
+                dphidtheta = -rm'.*sin(thetam)'.*dphidx + rm'.*cos(thetam)'.*dphidy;
+
+            end
+
+            for dim = 1:3
+                %Compute the gradient of the cost function analytically
+                [dphidr,dphidtheta,dphidz] = ...
+                    compute_cost_function_gradient(img,A,dim,Gamma_prior_inv,Gamma_noise_inv);
+
+                %Compute the gradient of the cost function numerically with central-differences
+                [dphidr_numerical,dphidtheta_numerical,dphidz_numerical] = ...
+                    compute_cost_function_gradient_central_differences(img,A,dim,Gamma_prior_inv,Gamma_noise_inv,delta);
+
+                %Compute the gradient of the cost function numerically with
+                %complex step method
+                [dphidr_complex,dphidtheta_complex,dphidz_complex] = ...
+                    compust_cost_function_gradient_complex(img,A,dim,Gamma_prior_inv,Gamma_noise_inv,delta);
+
+                err_r_1 = 100*max(abs(dphidr_numerical(:) - dphidr(:))./ abs(dphidr(:)));
+                err_r_2 = 100*max(abs(dphidr_complex(:) - dphidr(:))./ abs(dphidr(:)));
+
+                err_theta_1 = 100*max(abs(dphidtheta_numerical(:) - dphidtheta(:))./ abs(dphidtheta(:)));
+                err_theta_2 = 100*max(abs(dphidtheta_complex(:) - dphidtheta(:))./ abs(dphidtheta(:)));
+
+                err_z_1 = 100*max(abs(dphidz_numerical(:) - dphidz(:))./ abs(dphidz(:)));
+                err_z_2 = 100*max(abs(dphidz_complex(:) - dphidz(:))./ abs(dphidz(:)));
+
+                testCase.verifyTrue(err_r_1<errorThresh | err_r_2<errorThresh,sprintf('Analytical and numerical difference is more than %d (%%)\n',errorThresh));
+                testCase.verifyTrue(err_theta_1<errorThresh | err_theta_2<errorThresh,sprintf('Analytical and numerical difference is more than %d (%%)\n',errorThresh));
+                testCase.verifyTrue(err_z_1<errorThresh | err_z_2<errorThresh,sprintf('Analytical and numerical difference is more than %d (%%)\n',errorThresh));
+
+            end
+
+        end
+
+        function testOptimizationDifferentInitialConditions(testCase)
+            %% Prepare workspace
+            % Get the full path of the current script
+            fullpath = mfilename('fullpath');
+            % Extract just the folder
+            script_folder = fileparts(fullpath);
+            cd(script_folder);
+
+            % Have to add the functions path manually so prepare_workspace runs
+            grandparent_folder =fileparts(fileparts(script_folder));
+            addpath(genpath(fullfile(grandparent_folder,'functions')));
+
+            model_folder = prepare_workspace(script_folder);
+
+            rng(1);
+
+            %% Model parameters ( only two sensors, to reduce dimensionality of the problem so we can plot it)
+            z0 = 0.0058; %(Ohm m^2) is the contact impedance from the CEM article 58 Ohm cm^2
+            l0 = 40e-3; %(m) the tank radius
+            I0 = 2.4e-3;%(A) the magnitude of the injected current
+
+            % The derived characteristic units
+            V0 = z0*I0/(l0^2); %(V)
+            sigma0 = l0/z0; %(S/m)
+            J0 = I0/(l0^2);
+
+            model_parameters = create_default_3d_model_parameters(l0, z0, sigma0, I0);
+
+            model_parameters.maxsz = max(model_parameters.height,model_parameters.radius)/8;
+            model_parameters.numOfElectrodesPerRing = 4;
+            model_parameters.numOfRings = 2;
+            model_parameters.numOfSensors = 2;
+            model_parameters.sensorRadius = model_parameters.radius*1.5;
+            model_parameters.material.type = 'spherical';
+            model_parameters.material.position(1) = 0.95*(model_parameters.radius-model_parameters.material.radius);
+            model_parameters.material.position(3) = 0.5*model_parameters.height;
+
+            background_conductivity = 3.28e-1/sigma0;
+            anomaly_conductivity = background_conductivity/10;
+
+            %% Simulation parameters
+            dim = 3;            %if doing 1-axis, which dimmension?
+
+            %Optimizer parameters
+            max_iteratons = 50;
+            hessian_approximation = 'lbfgs';
+            use_parallel = true;
+
+            rmax = 2*model_parameters.radius;
+            rmin = model_parameters.radius*1.1;
+
+            zmax = model_parameters.height;
+            zmin = 0;
+
+            r0 = 1.5*model_parameters.radius; %radius of cylinder shell to perform optimizaiton on
+
+            alpha = 0; %controls the force of the repulsion!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+            %% Make forward model
+
+            [~,fmdls] = mk_mdeit_model(model_parameters,model_folder);
+
+            fmdl = fmdls{1};
+
+            sensorLocations = zeros(numel(fmdl.sensors),3);
+            for i = 1: numel(fmdl.sensors)
+                sensorLocations(i,:) = fmdl.sensors(i).position;
+            end
+
+            % Make homogeneous image
+            imgh = mk_image_mdeit(fmdl,background_conductivity);
+
+            % Add plastic cylinder
+            imgi = add_material_properties(imgh, [background_conductivity,anomaly_conductivity]);
+
+            % show_fem(imgi);
+            % plot_sensors(imgi);
+
+            n_sensors = numel(imgi.fwd_model.sensors);
+            n_stim = numel(imgi.fwd_model.stimulation);
+            n_elem = size(imgi.fwd_model.elems,1);
+            n_nodes = size(fmdl.nodes,1);
+
+            A = @(x) M(imgi,x);
+
+            %% Initialize
+
+            n_trial = 2;
+
+            R0 = model_parameters.radius*1.5;
+            r_new = R0*ones(1,n_sensors);
+            theta_new = [0,pi];
+            
+            
+            all_sensor_locations_0 = zeros(n_sensors,3,n_trial);
+
+            % Set multiple initial conditions
+            for i = 1:n_trial
+                z_new = model_parameters.height*rand(1,n_sensors);
+  
+                sensor_locations_0 = [(r_new.*cos(theta_new))',(r_new.*sin(theta_new))',z_new'];
                 
-                dphi = zeros(n_sensors*3,1);
-                for p = 1:3
-                    dphidp = compute_cost_function_gradient(...
-                        img,sensor_locations,Gamma_prior,Gamma_noise,A,dim,p);
-                    ids = (p-1)*n_sensors+1:p*n_sensors;
-                    dphi(ids) = dphidp;
+                all_sensor_locations_0(:,:,i) = sensor_locations_0;
+            end
+
+            
+            %% Define prior and noise covariance matrices
+
+            B = fwd_solve_mdeit(imgi);
+            max_B = max([abs(B.Bx(:));abs(B.By(:));abs(B.Bz(:))]);
+
+            % Set the noise variance with respect to the data magnitude
+            noise_std_deviation = max_B/10;
+            variance_noise = noise_std_deviation^2;
+
+            Jdim = calc_jacobian_1axis_direct_fully_vectorized_local(imgi,A,dim);
+
+            coeff = 50;
+            variance_prior = coeff*variance_noise/eigs(Jdim'*Jdim,1);
+
+            % Check how many eigenvectors of J'J are in the data-dominated
+            % regime, as opposed to the prior-dominated regime
+            d = sum(eigs(Jdim'*Jdim,n_elem).*variance_prior/variance_noise>1);
+
+            fprintf('# lambda_i*alpha:beta>1 = %i (%i)\n',d,n_elem);
+
+            % White noise with zero mean and \mu variance
+            Gamma_noise = variance_noise.*speye(n_stim*n_sensors,n_stim*n_sensors);
+            inv_Gamma_noise = inv(Gamma_noise);
+
+            Gamma_prior = variance_prior.*speye(n_elem,n_elem);
+            inv_Gamma_prior = inv(Gamma_prior);
+
+            Jx = calc_jacobian_1axis_direct_fully_vectorized_local(imgi,A,1);
+            Jy = calc_jacobian_1axis_direct_fully_vectorized_local(imgi,A,2);
+            Jz = calc_jacobian_1axis_direct_fully_vectorized_local(imgi,A,3);
+
+            J_3axis = [Jx;Jy;Jz];
+
+            coeff = 50;
+            variance_prior_3_axis = coeff*variance_noise/eigs(J_3axis'*J_3axis,1);
+
+            d_3axis = sum(eigs(J_3axis'*J_3axis,n_elem).*variance_prior_3_axis/variance_noise>1);
+
+            fprintf('# lambda_i*alpha:beta>1 = %i (%i)\n',d_3axis,n_elem);
+
+            Gamma_prior_3_axis = variance_prior_3_axis.*speye(n_elem,n_elem);
+            inv_Gamma_prior_3_axis = inv(Gamma_prior_3_axis);
+
+            Gamma_noise_3_axis = variance_noise.*speye(3*n_stim*n_sensors,3*n_stim*n_sensors);
+            inv_Gamma_noise_3_axis = inv(Gamma_noise_3_axis);
+
+
+            %% Define functions
+            jacobian_coordinate_transformation_cylindrical = compute_jacobian_coordinate_transformation_cylindrical(sensor_locations_0);
+
+            function jacobian_coordinate_transformation = compute_jacobian_coordinate_transformation_cylindrical(sensor_locations)
+
+                n_sensors = size(sensor_locations,1);
+
+                jacobian_coordinate_transformation = zeros(3,3,n_sensors);
+
+                rm = sqrt(sensor_locations(:,1).^2+sensor_locations(:,2).^2);
+                thetam = atan2(sensor_locations(:,2),sensor_locations(:,1));
+                zm = sensor_locations(:,3);
+
+                jacobian_coordinate_transformation_r = zeros(3,n_sensors);
+                jacobian_coordinate_transformation_r(1,:) = cos(thetam);
+                jacobian_coordinate_transformation_r(2,:) = sin(thetam);
+                jacobian_coordinate_transformation_r(3,:) = zeros(1,n_sensors);
+
+                jacobian_coordinate_transformation_theta = zeros(3,n_sensors);
+                jacobian_coordinate_transformation_theta(1,:) = -rm'.*sin(thetam)';
+                jacobian_coordinate_transformation_theta(2,:) = rm'.*cos(thetam)';
+                jacobian_coordinate_transformation_theta(3,:) = zeros(1,n_sensors);
+
+                jacobian_coordinate_transformation_z = zeros(3,n_sensors);
+                jacobian_coordinate_transformation_z(1,:) = zeros(1,n_sensors);
+                jacobian_coordinate_transformation_z(2,:) = zeros(1,n_sensors);
+                jacobian_coordinate_transformation_z(3,:) = ones(1,n_sensors);
+
+                jacobian_coordinate_transformation(1,:,:) = jacobian_coordinate_transformation_r;
+                jacobian_coordinate_transformation(2,:,:) = jacobian_coordinate_transformation_theta;
+                jacobian_coordinate_transformation(3,:,:) = jacobian_coordinate_transformation_z;
+            end
+
+            % Map sensor locations to vector in cartesian coordinates
+            function x = sensor_locations_to_vector_cartesian(sensor_locations)
+
+                n_sensors = size(sensor_locations,1);
+
+                x = zeros(3*n_sensors,1);
+
+                x(1:n_sensors) =  sensor_locations(:,1);
+                x(n_sensors+1:2*n_sensors) = sensor_locations(:,2);
+                x(2*n_sensors+1:3*n_sensors) = sensor_locations(:,3);
+
+            end
+
+            function sensor_locations = vector_to_sensor_locations_cartesian(x)
+
+                assert(mod(numel(x),3)==0);
+                n_sensors = numel(x)/3;
+
+                sensor_locations = zeros(n_sensors,3);
+
+                sensor_locations(:,1) = x(1:n_sensors);
+                sensor_locations(:,2) = x(n_sensors+1:2*n_sensors);
+                sensor_locations(:,3) = x(2*n_sensors+1:3*n_sensors);
+
+            end
+
+            % Map cartesian coordinates to cylindrical coordinates
+            function q = x_to_q_cylindrical(x)
+
+                assert(mod(numel(x),3)==0);
+                n_sensors = numel(x)/3;
+
+                rm = sqrt(x(1:n_sensors).^2+x(n_sensors+1:2*n_sensors).^2);
+                thetam = atan2(x(n_sensors+1:2*n_sensors),x(1:n_sensors));
+                zm = x(2*n_sensors+1:3*n_sensors);
+
+                q = [rm(:);thetam(:);zm(:)];
+            end
+
+            function x = q_to_x_cylindrical(q)
+
+                assert(mod(numel(q),3)==0);
+                n_sensors = numel(q)/3;
+
+                rm = q(1:n_sensors);
+                thetam = q(n_sensors+1:2*n_sensors);
+                zm = q(2*n_sensors+1:3*n_sensors);
+
+                x = [rm(:).*cos(thetam(:));rm(:).*sin(thetam(:));zm(:)];
+            end
+
+            % Map cartesian coordinates to parametrized region (region contained
+            % between two cylinders of radius rmin and rmax and height [0,3])
+            function q = map_x_to_q_cyl_region(x,rmin,rmax,zmin,zmax)
+                assert(mod(numel(x),3)==0);
+                n_sensors = numel(x)/3;
+
+                rm = sqrt(x(1:n_sensors).^2+x(n_sensors+1:2*n_sensors).^2);
+                thetam = atan2(x(n_sensors+1:2*n_sensors),x(1:n_sensors));
+                zm = x(2*n_sensors+1:3*n_sensors);
+
+
+                xim = log((rm-rmin)./(rmax-rm));
+                etam = log((zm-zmin)./(zmax-zm));
+
+                q = [xim(:);thetam(:);etam(:)];
+            end
+
+            function x = map_q_to_x_cyl_region(q,rmin,rmax,zmin,zmax)
+
+                sigmoid = @(y) 1./(1+exp(-y));
+
+                assert(mod(numel(q),3)==0);
+                n_sensors = numel(q)/3;
+
+                q = q(:);
+                xim = q(1:n_sensors);
+                thetam = q(n_sensors+1:2*n_sensors);
+                etam = q(2*n_sensors+1:3*n_sensors);
+
+                rm = rmin + (rmax-rmin).*sigmoid(xim);
+                zm = zmin + (zmax-zmin).*sigmoid(etam);
+
+                x = [rm(:).*cos(thetam(:));rm(:).*sin(thetam(:));zm(:)];
+            end
+
+            x_to_q_cyl_region = @(x) map_x_to_q_cyl_region(x,rmin,rmax,zmin,zmax);
+
+            q_to_x_cyl_region = @(q) map_q_to_x_cyl_region(q,rmin,rmax,zmin,zmax);
+
+            % Map cartesian coordinates to parametrized region (cylinder shell at radius r0)
+            function q = map_x_to_q_cyl_shell(x,r0,zmin,zmax)
+                assert(mod(numel(x),2)==0);
+                n_sensors = numel(x)/2;
+
+                thetam = atan2(x(n_sensors+1:2*n_sensors),x(1:n_sensors));
+                zm = x(2*n_sensors+1:3*n_sensors);
+
+                etam = log((zm-zmin)./(zmax-zm));
+
+                q = [thetam(:);etam(:)];
+            end
+
+            function x = map_q_to_x_cyl_shell(q,r0,zmin,zmax)
+                sigmoid = @(y) 1./(1+exp(-y));
+
+                assert(mod(numel(q),2)==0);
+                n_sensors = numel(q)/2;
+
+                q = q(:);
+                thetam = q(1:n_sensors);
+                etam = q(n_sensors+1:2*n_sensors);
+
+                zm = zmin + (zmax-zmin).*sigmoid(etam);
+
+                x = [r0.*cos(thetam(:));r0.*sin(thetam(:));zm(:)];
+            end
+
+            x_to_q_cyl_shell = @(x) map_x_to_q_cyl_shell(x,r0,zmin,zmax);
+
+            q_to_x_cyl_shell = @(q) map_q_to_x_cyl_shell(q,r0,zmin,zmax);
+
+            x0 = sensor_locations_to_vector_cartesian(sensor_locations_0);
+
+            % Full map from q coordinates to sensor locations and back for constrained
+            % optimization
+            vector_to_sensor_locations_con = @(q) vector_to_sensor_locations_cartesian(q_to_x_cylindrical(q));
+            sensor_locations_to_vector_con = @(sensor_locations) x_to_q_cylindrical(sensor_locations_to_vector_cartesian(sensor_locations));
+
+            % Full map from q coordinates to sensor locations and back for
+            % unconstrained optimization
+            vector_to_sensor_locations_unc = @(q) vector_to_sensor_locations_cartesian(q_to_x_cyl_region(q));
+            sensor_locations_to_vector_unc = @(sensor_locations) x_to_q_cyl_region(sensor_locations_to_vector_cartesian(sensor_locations));
+
+            % Sanity check
+            q = x_to_q_cylindrical(x0);
+            x = q_to_x_cylindrical(q);
+            assert(norm(x-x0)<1e-5,'Unexpected');
+
+            % Sanity check
+            q0 = sensor_locations_to_vector_con(sensor_locations_0);
+            sensor_locations_new = vector_to_sensor_locations_con(q0);
+            assert(norm(sensor_locations_new-sensor_locations_0)<1e-5,'Unexpected');
+
+            % Sanity check
+            sensor_locations = vector_to_sensor_locations_con(q0);
+            q_new = sensor_locations_to_vector_con(sensor_locations);
+            assert(norm(q0-q_new)<1e-5,'Unexpected');
+
+            % Transform gradient of cost function w.r.t. cartesian coordinates to
+            % w.r.t. q coordinates
+            function dphidq = dphidp_to_dphidq(sensor_locations,dphidp,jacobian_coordinate_transformation)
+
+                n_sensors = size(sensor_locations,1);
+
+                assert(all(size(jacobian_coordinate_transformation) == [3,3,n_sensors]));
+
+                dphidq = zeros(3,n_sensors);
+
+                for q = 1:3
+                    temp = zeros(1,n_sensors);
+                    for dim = 1:3
+                        temp = temp + squeeze(jacobian_coordinate_transformation(q,dim,:)).'.*dphidp(dim,:);
+                    end
+                    dphidq(q,:) = temp;
                 end
 
             end
+
+
+            %% Functions to compute cost and cost gradient
+            function out = f(img,q,inv_Gamma_prior,inv_Gamma_noise,A,vector_to_sensor_locations,opt_mode,mode,dim)
+
+                allowed_opt_modes = {'a-opt','d-opt'};
+                assert(ismember(opt_mode,allowed_opt_modes));
+
+                allowed_modes = {'mdeit3','mdeit1'};
+                assert(ismember(mode,allowed_modes));
+
+                if strcmp(mode,'mdeit3') && nargin<9
+                    dim = 'default';
+                end
+
+                sensor_locations = vector_to_sensor_locations(q);
+
+                switch mode
+                    case 'mdeit1'
+                        switch opt_mode
+                            case 'a-opt'
+                                phi_oed = compute_cost_function_a_opt(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A,dim);
+                            case 'd-opt'
+                                phi_oed = compute_cost_function_d_opt(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A,dim);
+                        end
+                    case 'mdeit3'
+                        switch opt_mode
+                            case 'a-opt'
+                                phi_oed = compute_cost_function_a_opt_3_axis(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A);
+                            case 'd-opt'
+                                phi_oed = compute_cost_function_d_opt_3_axis(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A);
+                        end
+                end
+
+                out = phi_oed;
+            end
+
+            function dphi = g(img,q,inv_Gamma_prior,inv_Gamma_noise,A,...
+                    vector_to_sensor_locations,jacobian_coordinate_transformation,opt_mode,mode,dim)
+
+                n_sensors = numel(img.fwd_model.sensors);
+
+                allowed_opt_modes = {'a-opt','d-opt'};
+                assert(ismember(opt_mode,allowed_opt_modes));
+
+                allowed_modes = {'mdeit3','mdeit1'};
+                assert(ismember(mode,allowed_modes));
+
+                if strcmp(mode,'mdeit3') && nargin<10
+                    dim = 'default';
+                end
+
+                sensor_locations = vector_to_sensor_locations(q);
+
+                switch mode
+                    case 'mdeit1'
+                        switch opt_mode
+                            case 'a-opt'
+                                dphidp = compute_cost_function_gradient_a_opt_optimized(...
+                                    img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A,dim);
+                            case 'd-opt'
+                                dphidp = compute_cost_function_gradient_d_opt_optimized(...
+                                    img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A,dim);
+                        end
+                    case 'mdeit3'
+                        switch opt_mode
+                            case 'a-opt'
+                                dphidp = compute_cost_function_gradient_a_opt_optimized_3_axis(...
+                                    img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A);
+                            case 'd-opt'
+                                dphidp = compute_cost_function_gradient_d_opt_optimized_3_axis(...
+                                    img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A);
+                        end
+                end
+
+                % Convert cartesian derivatives to other coordinate derivatives (
+                % generalized)
+                dphidq = dphidp_to_dphidq(sensor_locations,dphidp,jacobian_coordinate_transformation);
+
+                dphi = [dphidq(1,:),dphidq(2,:),dphidq(3,:)];
+
+
+            end
+
+            f_a_opt_mdeit_dim_con = @(q) f(imgi,q,inv_Gamma_prior,inv_Gamma_noise,A,vector_to_sensor_locations_con,'a-opt','mdeit1',dim);
+            g_a_opt_mdeit_dim_con  = @(q) g(imgi,q,inv_Gamma_prior,inv_Gamma_noise,A,...
+                vector_to_sensor_locations_con,jacobian_coordinate_transformation_cylindrical,'a-opt','mdeit1',dim);
+
+            f_d_opt_mdeit_dim_con = @(q) f(imgi,q,inv_Gamma_prior,inv_Gamma_noise,A,vector_to_sensor_locations_con,'d-opt','mdeit1',dim);
+            g_d_opt_mdeit_dim_con  = @(q) g(imgi,q,inv_Gamma_prior,inv_Gamma_noise,A,...
+                vector_to_sensor_locations_con,jacobian_coordinate_transformation_cylindrical,'d-opt','mdeit1',dim);
+
+            f_a_opt_mdeit3_con = @(q) f(imgi,q,inv_Gamma_prior_3_axis,inv_Gamma_noise_3_axis,A,vector_to_sensor_locations_con,'a-opt','mdeit3',dim);
+            g_a_opt_mdeit3_con  = @(q) g(imgi,q,inv_Gamma_prior_3_axis,inv_Gamma_noise_3_axis,A,...
+                vector_to_sensor_locations_con,jacobian_coordinate_transformation_cylindrical,'a-opt','mdeit3',dim);
+
+            f_d_opt_mdeit3_con = @(q) f(imgi,q,inv_Gamma_prior_3_axis,inv_Gamma_noise_3_axis,A,vector_to_sensor_locations_con,'d-opt','mdeit3',dim);
+            g_d_opt_mdeit3_con  = @(q) g(imgi,q,inv_Gamma_prior_3_axis,inv_Gamma_noise_3_axis,A,...
+                vector_to_sensor_locations_con,jacobian_coordinate_transformation_cylindrical,'d-opt','mdeit3',dim);
+
+            %% PlotFcns
+            % function stop = outfun_d_opt(x,optimValues,state)
+            %
+            % switch state
+            %     case 'iter'
+            %         % Make updates to plot or guis as needed
+            %         this_axis = gca;
+            %         sensor_locations_k = vector_to_sensor_locations(x);
+            %         img_k = assign_sensor_locations(imgi,sensor_locations_k);
+            %         plot_sensors(img_k,false,'r','s',this_axis);
+            %         axis([-1.1*R0 1.1*R0 -1.1*R0 1.1*R0 0 model_parameters.height])
+            %         box on;grid on;
+            %         view(3)
+            %         drawnow
+            %     case 'interrupt'
+            %         % Probably no action here. Check conditions to see
+            %         % whether optimization should quit.
+            %     case 'init'
+            %         hold on
+            %         show_fem(imgi);
+            %         % camlight;lighting gouraud
+            %     case 'done'
+            %         % Cleanup of plots, guis, or final plot
+            %         this_axis = gca;
+            %         sensor_locations_k = vector_to_sensor_locations(x);
+            %         img_k = assign_sensor_locations(imgi,sensor_locations_k);
+            %         plot_sensors(img_k,false,'b','s',this_axis);
+            %         axis([-1.1*R0 1.1*R0 -1.1*R0 1.1*R0 0 model_parameters.height])
+            %         box on;grid on;
+            %         view(3)
+            %         drawnow
+            %     otherwise
+            % end
+            %
+            % stop = false; %continue
+            % end
+            %
+            % function stop = outfun_a_opt(x,optimValues,state)
+            % switch state
+            %     case 'iter'
+            %
+            %         % Make updates to plot or guis as needed
+            %         this_axis = gca;
+            %         sensor_locations_k = vector_to_sensor_locations(x);
+            %         img_k = assign_sensor_locations(imgi,sensor_locations_k);
+            %         plot_sensors(img_k,false,'r','o',this_axis);
+            %         axis([-1.1*R0 1.1*R0 -1.1*R0 1.1*R0 0 model_parameters.height])
+            %         box on;grid on;
+            %         view(3)
+            %         drawnow
+            %     case 'interrupt'
+            %         % Probably no action here. Check conditions to see
+            %         % whether optimization should quit.
+            %     case 'init'
+            %         hold on
+            %         show_fem(imgi);
+            %         % camlight; lighting gouraud
+            %
+            %     case 'done'
+            %         % Cleanup of plots, guis, or final plot
+            %         this_axis = gca;
+            %         sensor_locations_k = vector_to_sensor_locations(x);
+            %         img_k = assign_sensor_locations(imgi,sensor_locations_k);
+            %         plot_sensors(img_k,false,'b','x',this_axis);
+            %         axis([-1.1*R0 1.1*R0 -1.1*R0 1.1*R0 0 model_parameters.height])
+            %         box on;grid on;
+            %         view(3)
+            %         drawnow
+            %     otherwise
+            % end
+            %
+            % stop = false; %continue
+            % end
+            
+            %% OutFcns
+            function [xsol,fval,history] = runfmincon(funcgrad,q0,lb,ub,options)
+                % Set up shared variables with outfun
+                history.x = [];
+                history.fval = [];
+                
+                options.OutputFcn = @outfun;
+
+                function stop = outfun(x,optimValues,state)
+                    stop = false;
+
+                    switch state
+                        case 'init'
+                            history.fval = [history.fval, optimValues.fval];
+                            history.x = [history.x, x];
+                        case 'iter'
+                            history.fval = [history.fval, optimValues.fval];
+                            history.x = [history.x, x];
+                        case 'done'
+                        otherwise
+                    end
+                end
+
+                [xsol,fval] = fmincon(funcgrad,q0,[],[],[],[],lb,ub,[],options);
+
+            end
+            %% Define function+gradient function
+
+            function [func,grad] = funcwithgrad(q,f_impl,g_impl)
+                % Calculate objective f
+                func = f_impl(q);
+
+                if nargout > 1 % gradient required
+                    grad =  g_impl(q);
+                end
+            end
             
 
-            func = @(x) f(img,x,Gamma_prior,Gamma_noise,A,dim);
-            grad = @(x) g(img,x,Gamma_prior,Gamma_noise,A,dim);
+            %% Optimize 1-axis A-optimality with fmincon in z-coordinate of sensors
+            fprintf('(Shell) 1-axis A-optimality OED - fmincon\n')
             
-            % Test if the functions are working
-            sensor_locations_0 = fetch_sensor_locations(img);
+            options = optimoptions('fmincon',...
+                'OptimalityTolerance',1e-9,'Display','iter','MaxIterations',max_iteratons, ...
+                'Algorithm','interior-point','HessianApproximation',hessian_approximation,...
+                'SpecifyObjectiveGradient',true,'UseParallel',use_parallel);
+
+            fun_a_opt_mdeit_1 = @(q) funcwithgrad(q,f_a_opt_mdeit_dim_con,g_a_opt_mdeit_dim_con);
+
+            lb = [ r0*ones(1,n_sensors),   [0,pi],   [0 0]];
+            ub = [ r0*ones(1,n_sensors),   [0,pi],   model_parameters.height*ones(1,n_sensors) ];
+
+            figure;        
+
+            all_x_a_opt_con_shell = zeros(n_trial,length(x0));
+            img_a_opt_con_shell = cell(1,n_trial);
+            history = cell(1,n_trial);
+            for n = 1:n_trial
+
+                % Plot the initial sensor locations
+                cla;
+                show_fem(imgi);
+                img_temp = assign_sensor_locations(imgi,all_sensor_locations_0(:,:,n));
+                plot_sensors(img_temp,false,'b','.');
+                hold off
+                box on;grid on;
+                axis([-1.1*rmax 1.1*rmax -1.1*rmax 1.1*rmax 0 model_parameters.height])
+                drawnow
+
+                % Initial conditions
+                q0_con = sensor_locations_to_vector_con(all_sensor_locations_0(:,:,n));
+
+                [x_a_opt_con_shell,fval,history{n}] = runfmincon(fun_a_opt_mdeit_1,q0_con,lb,ub,options);
+
+                % x_a_opt_con_shell = fmincon(fun_a_opt_mdeit_1,q0_con,[],[],[],[],lb,ub,[],options);
+                
+                all_x_a_opt_con_shell(n,:) = x_a_opt_con_shell;
+                img_a_opt_con_shell{n} = assign_sensor_locations(imgi,vector_to_sensor_locations_con(x_a_opt_con_shell));
+            end
+
+            %% Plot cost function over grid of degrees of freedom and the iterates
+            z1 = linspace(0,model_parameters.height,10);
+            z2 = z1;
+            [Z1,Z2] = meshgrid(z1,z2);
+
+            cost = zeros(size(Z1));
+
+            q0 = [r0 r0 0 pi 0 0];
+            for i = 1:size(Z1,1)
+                fprintf('Working on line %i of %i\n',i,size(Z1,1));
+                for j = 1:size(Z1,2)
+                    q = q0;
+                    q(5) = Z1(i,j);
+                    q(6) = Z2(i,j);
+                    cost(i,j) = f_a_opt_mdeit_dim_con(q);
+                end
+            end
+
+            surf(Z1,Z2,cost);
+            xlabel('$z_1$','interpreter','latex')
+            ylabel('$z_1$','interpreter','latex')
+            grid on;grid minor; box on;
+            
+            hold on
+            colors = ['r','b'];
+            for n = 1:n_trial
+                n_iterates = numel(history{n}.fval);
+
+                z1 = history{n}.x(5,1:n_iterates);
+                z2 = history{n}.x(6,1:n_iterates);
+                fz = history{n}.fval(1:n_iterates);
+
+                text(z1,z2,fz,num2str((1:n_iterates)'),'Color',colors)
+                plot3(z1,z2,fz,'.','MarkerSize',20,'Color',colors(n))
+                drawnow
+            end
+            hold off
+
+            %% Plot the optimal sensor locations
+            theta = linspace(0,2*pi,100);
+            [x, y, z] = cylinder(R0, 50);
+            z = z * 3;
+
+
+            figure
+            hold on
+            show_fem(imgi);
+            
+            for n = 1:n_trial
+                img_init = assign_sensors_locations(imgi,all_sensor_locations_0(:,:,n));
+                plot_sensors(img_init,false,'b','.');
+            end
+
+            for n = 1:n_trial
+                img_temp = img_a_opt_con_shell{n};
+                plot_sensors(img_temp,false,'r','s');
+            end
+            
+            hold on
+            hSurf = surf(h,x, y, z);
+            set(hSurf, 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'FaceColor', 'red')
+            
+            plot3(h,R0*cos(theta),R0*sin(theta),model_parameters.height/2*ones(size(theta)),'LineStyle','--','Color','b')
+            axis([-1.1*rmax 1.1*rmax -1.1*rmax 1.1*rmax 0 model_parameters.height])
+            hold off
+            box on;grid on;
+            camlight; lighting gouraud
+            drawnow
+        end
+        
+        
+        
+        function testAOptimality(testCase)
+
+            %% Prepare workspace
+            % Get the full path of the current script
+            fullpath = mfilename('fullpath');
+            % Extract just the folder
+            script_folder = fileparts(fullpath);
+            cd(script_folder);
+
+            % Have to add the functions path manually so prepare_workspace runs
+            parent_folder =fileparts(script_folder);
+            addpath(genpath(fullfile(parent_folder,'functions')));
+
+            model_folder = prepare_workspace(script_folder);
+
+            rng(1);
+
+            %% Model parameters
+            z0 = 0.0058; %(Ohm m^2) is the contact impedance from the CEM article 58 Ohm cm^2
+            l0 = 40e-3; %(m) the tank radius
+            I0 = 2.4e-3;%(A) the magnitude of the injected current
+
+            % The derived characteristic units
+            V0 = z0*I0/(l0^2); %(V)
+            sigma0 = l0/z0; %(S/m)
+            J0 = I0/(l0^2);
+
+            model_parameters = create_default_3d_model_parameters(l0, z0, sigma0, I0);
+
+            model_parameters.maxsz = max(model_parameters.height,model_parameters.radius)/8;
+            model_parameters.numOfElectrodesPerRing = 8;
+            model_parameters.numOfRings = 4;
+            model_parameters.numOfSensors = 4;
+            model_parameters.sensorRadius = model_parameters.radius*1.5;
+            model_parameters.material.type = 'spherical';
+            model_parameters.material.position(3) = 3/4*model_parameters.height;
+
+            background_conductivity = 3.28e-1/sigma0;
+            anomaly_conductivity = background_conductivity/10;
+
+            %% Simulation parameters
+
+            do_3_axis = true;
+            dim = 3;            %if doing 1-axis, which dimmension?
+
+            %Optimizer parameters
+            max_iteratons = 10;
+            hessian_approximation = 'bfgs';
+            use_parallel = true;
+            algorithm = 'quasi-newton';
+
+            rmax = 2*model_parameters.radius;
+            rmin = model_parameters.radius*1.1;
+
+            %% Make forward model
+
+            [~,fmdls] = mk_mdeit_model(model_parameters,model_folder);
+
+            fmdl = fmdls{1};
+
+            sensorLocations = zeros(numel(fmdl.sensors),3);
+            for i = 1: numel(fmdl.sensors)
+                sensorLocations(i,:) = fmdl.sensors(i).position;
+            end
+
+            fprintf("Test Parameters: \n"+ ...
+                "Error threshold: %g (%%)\n",testCase.testParameters.errorThresh);
+
+            % Make homogeneous image
+            imgh = mk_image_mdeit(fmdl,background_conductivity);
+
+            % Add plastic cylinder
+            imgi = add_material_properties(imgh, [background_conductivity,anomaly_conductivity]);
+
+            % show_fem(imgi);
+            % plot_sensors(imgi);
+
+            n_sensors = numel(imgi.fwd_model.sensors);
+            n_stim = numel(imgi.fwd_model.stimulation);
+            n_elem = size(imgi.fwd_model.elems,1);
+            n_nodes = size(fmdl.nodes,1);
+
+            A = @(x) M(imgi,x);
+
+            %% Assume white noise and white prior
+
+            B = fwd_solve_mdeit(imgi);
+            max_B = max([abs(B.Bx(:));abs(B.By(:));abs(B.Bz(:))]);
+
+            noise_std_deviation = max_B/10;
+
+            % Set the noise variance with respect to the data magnitude
+            variance_noise = noise_std_deviation^2;
+
+            % Check if we are in a prior dominated regime, or if J(\sigma)
+            % actually contributes to the gradient of the sensor positions
+
+            % Gamma_post = (1/variance_noise J'*J + 1/variance_prior I
+            % )^-1. The trace of Gamma_post is given by:
+
+            % \sum_{i=1}^n_elem alpha/(1+\lambda_i\alpha/beta), where
+            % \lambda_i are the eigenvalues of J'J, alpha is the variance
+            % of the prior and beta is the variance of the noise
+
+            % If most \lambda_i\alpha/beta << 1, we are on the prior
+            % dominated regime, and the trace will be n_elem*\alpha.
+
+            % If we are in a data dominated regime, many
+            % \lambda_i\alpha/beta >> 1. In that case, we can approximate
+            % the trace as:
+
+            % (n_elem - r)\alpha + \sum_{i=1}^r \beta/\lambda_i, where r is
+            % the number of eigenvalues that satisfy \lambda_i\alpha/beta
+            % >> 1.
+
+            % Since the eigenvalues of J'J decay rapidly, its hard to force
+            % the data-oriented regime
+
+            if exist('do_3_axis','var')
+                if ~do_3_axis
+                    Jdim = calc_jacobian_1axis_direct_fully_vectorized_local(imgi,A,dim);
+
+                    coeff = 50;
+                    variance_prior = coeff*variance_noise/eigs(Jdim'*Jdim,1);
+
+                    % Check how many eigenvectors of J'J are in the data-dominated
+                    % regime, as opposed to the prior-dominated regime
+                    d = sum(eigs(Jdim'*Jdim,n_elem).*variance_prior/variance_noise>1);
+
+                    fprintf('# lambda_i*alpha:beta>1 = %i (%i)\n',d,n_elem);
+
+                    % White noise with zero mean and \mu variance
+                    Gamma_noise = variance_noise.*speye(n_stim*n_sensors,n_stim*n_sensors);
+                    Gamma_noise_inv = inv(Gamma_noise);
+
+                    Gamma_prior = variance_prior.*speye(n_elem,n_elem);
+                    Gamma_prior_inv = inv(Gamma_prior);
+
+                else
+                    Jx = calc_jacobian_1axis_direct_fully_vectorized_local(imgi,A,1);
+                    Jy = calc_jacobian_1axis_direct_fully_vectorized_local(imgi,A,2);
+                    Jz = calc_jacobian_1axis_direct_fully_vectorized_local(imgi,A,3);
+
+                    J_3axis = [Jx;Jy;Jz];
+
+                    coeff = 50;
+                    variance_prior_3_axis = coeff*variance_noise/eigs(J_3axis'*J_3axis,1);
+
+                    d_3axis = sum(eigs(J_3axis'*J_3axis,n_elem).*variance_prior_3_axis/variance_noise>1);
+
+                    fprintf('# lambda_i*alpha:beta>1 = %i (%i)\n',d_3axis,n_elem);
+
+                    Gamma_prior = variance_prior_3_axis.*speye(n_elem,n_elem);
+                    Gamma_prior_inv = inv(Gamma_prior);
+
+                    Gamma_noise = variance_noise.*speye(3*n_stim*n_sensors,3*n_stim*n_sensors);
+                    Gamma_noise_inv = inv(Gamma_noise);
+                end
+            else
+                error('Here');
+            end
+
+            alpha = 0; %controls the force of the repulsion!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+            %% Perform optimization of sensor position
+
+            % Initialize
+            R0 = model_parameters.radius*1.5;
+            theta_new = 0:2*pi/n_sensors:2*pi*(n_sensors-1)/n_sensors;
+            r_new = R0*ones(1,n_sensors);
+            z_new = model_parameters.height/2*ones(1,n_sensors);
+
+            sensor_locations_0 = [(r_new.*cos(theta_new))',(r_new.*sin(theta_new))',z_new'];
+
+            img_init = assign_sensor_locations(imgi,sensor_locations_0);
+
+            plot_sensors(img_init);
+
+            R0 = max(sqrt(sensor_locations_0(:,1).^2+sensor_locations_0(:,2).^2));
+            z0 = max(sensor_locations_0(:,3));
+
+            % These functions map sensor locations to sensor theta,eta
+
+            % Reparametrize z so we can enforce it to be in [0,3]. Let
+            % z = 3*sigmoid(nu), then z\in[0,3] and \nu is
+            % unconstrained
+
+            % Reparametrize r so we can enforce it to be in [rmin,rmax]. Let
+            % r = rmin + (rmax-rmin)*sigmoid(xi), then r\in[rmin,rmax] and \xi is
+            % unconstrained
+
+            function x = sensor_locations_to_vector(sensor_locations)
+
+                n_sensors = size(sensor_locations,1);
+
+                x = zeros(3*n_sensors,1);
+
+                for m = 1:n_sensors
+
+                    % \xi
+                    rm =  sqrt(sensor_locations(m,1)^2+sensor_locations(m,2)^2);
+                    x(m) = -log((rmax-rmin)/(rm-rmin) -1);
+
+                    % \theta
+                    x(n_sensors + m) = atan2(sensor_locations(m,2),sensor_locations(m,1)); %thetam
+
+                    % \eta
+                    zm =  sensor_locations(m,3);
+                    x(2*n_sensors+m) = log(zm/(3-zm)); %etam
+                end
+
+            end
+
+            function sensor_locations = vector_to_sensor_locations(x)
+
+                assert(mod(numel(x),3)==0);
+                n_sensors = numel(x)/3;
+
+                sensor_locations = zeros(n_sensors,3);
+
+                for m = 1:n_sensors
+
+                    xim = x(m);
+                    thetam = x(m+n_sensors);
+                    etam = x(m+2*n_sensors);
+
+                    rm = rmin + (rmax-rmin)/(1+exp(-xim));
+                    zm = 3/(1+exp(-etam));
+
+                    sensor_locations(m,:) = [rm*cos(thetam),rm*sin(thetam),zm];
+                end
+            end
+
+            % Sanity check
+            s = vector_to_sensor_locations(sensor_locations_to_vector(sensor_locations_0));
+            assert(norm(s-sensor_locations_0)<1e-5,'Unexpected');
+
             x0 = sensor_locations_to_vector(sensor_locations_0);
 
-            out_f = func(x0);           
-            out_g = grad(x0);
-            
-            %% Optimize with L-BFGS
-            tol = 1e-9;
-            max_iterations = 10;
-            options.display = true;
-            options.maxIterations = 10;
-            options.tol = tol;
-            % [xk,k] = LBFGS(func,grad,x0,options);
-            
-            % [xk,k] = BFGS(func,grad,x0,1e-9,10)
-        
-            [xk,k] = steepestDescent(func,grad,x0,1e-9,max_iterations);
+            if exist('do_3_axis','var')
+                if ~do_3_axis
+                    % Scale repulsion term to be of the same order as initial cost
+                    f_a_opt_0 = compute_cost_function_a_opt(imgi,sensor_locations_0,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+                    f_d_opt_0 = compute_cost_function_d_opt(imgi,sensor_locations_0,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                    G_0 = repulsion_cost(sensor_locations_0);
+
+                end
+            end
+
+            % Sanity check
+            if exist('do_3_axis','var')
+                if ~do_3_axis
+                    out_f_a_opt = f_a_opt(imgi,x0,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+                    disp(out_f_a_opt);
+                end
+            end
+
+            % Compute cost function ( 1-axis MDEIT)
+            function out = f_a_opt(img,x,inv_Gamma_prior,inv_Gamma_noise,A,dim)
+
+                sensor_locations = vector_to_sensor_locations(x);
+
+                phi_oed = compute_cost_function_a_opt(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A,dim);
+
+                G = repulsion_cost(sensor_locations);
+
+                out = phi_oed+alpha*abs(f_a_opt_0/G_0)*G;
+            end
+
+            function out = f_d_opt(img,x,inv_Gamma_prior,inv_Gamma_noise,A,dim)
+
+                sensor_locations = vector_to_sensor_locations(x);
+
+                phi_oed= compute_cost_function_d_opt(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A,dim);
+
+                G = repulsion_cost(sensor_locations);
+
+                out = phi_oed+alpha*abs(f_d_opt_0/G_0)*G;
+            end
+
+            % Cost function gradients (1-axis MDEIT). Allow movement in xi
+            % theta and eta.
+            function dphi = g_a_opt_optimized(img,x,Gamma_prior_inv,Gamma_noise_inv,A,dim)
+
+                sigmoid = @(y) 1./(1+exp(-y));
+                n_sensors = numel(img.fwd_model.sensors);
+
+                x = x(:);
+                xim = x(1:n_sensors);
+                thetam = x(n_sensors+1:2*n_sensors);
+                etam = x(2*n_sensors+1:3*n_sensors);
+
+                rm = rmin + (rmax-rmin).*sigmoid(xim);
+                zm = 3.*sigmoid(etam);
+
+                sensor_locations = vector_to_sensor_locations(x);
+
+                dphidp = compute_cost_function_gradient_a_opt_optimized(...
+                    img,sensor_locations,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                dphidx = dphidp(1,:);
+                dphidy = dphidp(2,:);
+                dphidz = dphidp(3,:);
+
+                dphidr = cos(thetam)'.*dphidx+sin(thetam)'.*dphidy;
+                dphidtheta = -rm'.*sin(thetam)'.*dphidx + rm'.*cos(thetam)'.*dphidy;
+
+                drdxi = (rmax-rmin).*sigmoid(xim).'.*(1-sigmoid(xim)).';
+                dzdeta = 3.*sigmoid(etam).'.*(1-sigmoid(etam)).';
+
+                dphidxi = dphidr.*drdxi;
+                dphideta = dphidz.*dzdeta;
+
+                % % Derivatives of repulsion cost w.r.t cartesian coordinates
+                % [dGx,dGy,dGz] = repulsion_grad_cartesian(sensor_locations);
+                %
+                % % Derivatives of repulsion w.r.t theta and eta
+                % dGdtheta = -rm*sin(thetam).'.*dGx(:).' +rm*cos(thetam).'.*dGy(:).';
+                % dGdeta = 3*dGz(:).'.*sigmoid(etam).'.*(1-sigmoid(etam)).';
+                %
+                % % Correction factor
+                % dGdtheta = alpha*abs(f_a_opt_0/G_0)*dGdtheta;
+                % dGdeta = alpha*abs(f_a_opt_0/G_0)*dGdeta;
+
+                dphi = [dphidxi,dphidtheta,dphideta];
+            end
+
+            % For trying with fmincon
+            %( 1-axis MDEIT)
+            function out = f_a_opt_constrained(img,x,inv_Gamma_prior,inv_Gamma_noise,A,dim)
+
+                assert(mod(numel(x),3)==0);
+                n_sensors = numel(x)/3;
+
+                sensor_locations = zeros(n_sensors,3);
+
+                for m = 1:n_sensors
+                    rm = x(m);
+                    thetam = x(m+n_sensors);
+                    zm = x(m+2*n_sensors);
+
+                    sensor_locations(m,:) = [rm*cos(thetam),rm*sin(thetam),zm];
+                end
+
+                phi_oed = compute_cost_function_a_opt(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A,dim);
+
+                out = phi_oed;
+            end
+            function dphi = g_a_opt_optimized_constrained(img,x,Gamma_prior_inv,Gamma_noise_inv,A,dim)
+
+                n_sensors = numel(img.fwd_model.sensors);
+
+                x = x(:);
+                rm = x(1:n_sensors);
+                thetam = x(n_sensors+1:2*n_sensors);
+                zm = x(2*n_sensors+1:3*n_sensors);
+
+                sensor_locations = vector_to_sensor_locations(x);
+
+                dphidp = compute_cost_function_gradient_a_opt_optimized(...
+                    img,sensor_locations,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                dphidx = dphidp(1,:);
+                dphidy = dphidp(2,:);
+                dphidz = dphidp(3,:);
+
+                dphidr = cos(thetam)'.*dphidx+sin(thetam)'.*dphidy;
+                dphidtheta = -rm'.*sin(thetam)'.*dphidx + rm'.*cos(thetam)'.*dphidy;
+
+                dphi = [dphidr,dphidtheta,dphidz];
+            end
 
 
-            sensor_locations_k = vector_to_sensor_locations(xk);
-            
+            % ( 3-axis MDEIT)
+            function out = f_a_opt_constrained_3_axis(img,x,inv_Gamma_prior,inv_Gamma_noise,A)
+
+                assert(mod(numel(x),3)==0);
+                n_sensors = numel(x)/3;
+
+                sensor_locations = zeros(n_sensors,3);
+
+                for m = 1:n_sensors
+                    rm = x(m);
+                    thetam = x(m+n_sensors);
+                    zm = x(m+2*n_sensors);
+
+                    sensor_locations(m,:) = [rm*cos(thetam),rm*sin(thetam),zm];
+                end
+
+                phi_oed = compute_cost_function_a_opt_3_axis(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A);
+
+                out = phi_oed;
+            end
+            function dphi = g_a_opt_optimized_constrained_3_axis(img,x,Gamma_prior_inv,Gamma_noise_inv,A)
+
+                n_sensors = numel(img.fwd_model.sensors);
+
+                x = x(:);
+                rm = x(1:n_sensors);
+                thetam = x(n_sensors+1:2*n_sensors);
+                zm = x(2*n_sensors+1:3*n_sensors);
+
+                sensor_locations = vector_to_sensor_locations(x);
+
+                dphidp = compute_cost_function_gradient_a_opt_optimized_3_axis(...
+                    img,sensor_locations,Gamma_prior_inv,Gamma_noise_inv,A);
+
+                dphidx = dphidp(1,:);
+                dphidy = dphidp(2,:);
+                dphidz = dphidp(3,:);
+
+                dphidr = cos(thetam)'.*dphidx+sin(thetam)'.*dphidy;
+                dphidtheta = -rm'.*sin(thetam)'.*dphidx + rm'.*cos(thetam)'.*dphidy;
+
+                dphi = [dphidr,dphidtheta,dphidz];
+            end
+
+
+            function dphi = g_d_opt_optimized(img,x,Gamma_prior_inv,Gamma_noise_inv,A,dim)
+
+                sigmoid = @(y) 1./(1+exp(-y));
+                n_sensors = numel(img.fwd_model.sensors);
+
+                x = x(:);
+                xim = x(1:n_sensors);
+                thetam = x(n_sensors+1:2*n_sensors);
+                etam = x(2*n_sensors+1:3*n_sensors);
+
+                rm = rmin + (rmax-rmin).*sigmoid(xim);
+                zm = 3.*sigmoid(etam);
+
+                sensor_locations = vector_to_sensor_locations(x);
+
+                % Derivatives of OED cost function w.r.t. cartesian
+                % coordinates
+                dphidp = compute_cost_function_gradient_d_opt_optimized(...
+                    img,sensor_locations,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                dphidx = dphidp(1,:);
+                dphidy = dphidp(2,:);
+                dphidz = dphidp(3,:);
+
+                % Derivatives of OED cost function w.r.t. theta and eta
+                dphidr = cos(thetam)'.*dphidx+sin(thetam)'.*dphidy;
+                drdxi = (rmax-rmin).*sigmoid(xim).'.*(1-sigmoid(xim)).';
+                dzdeta = 3.*sigmoid(etam).'.*(1-sigmoid(etam)).';
+
+                dphidxi = dphidr.*drdxi;
+                dphidtheta = -rm'.*sin(thetam)'.*dphidx + rm'.*cos(thetam)'.*dphidy;
+                dphideta = dphidz.*dzdeta;
+
+                % % Derivatives of repulsion cost w.r.t cartesian coordinates
+                % [dGx,dGy,dGz] = repulsion_grad_cartesian(sensor_locations);
+                %
+                % % Derivatives of repulsion w.r.t theta and eta
+                % dGdtheta = -rm*sin(thetam).'.*dGx(:).' +rm*cos(thetam).'.*dGy(:).';
+                % dGdeta = 3*dGz(:).'.*sigmoid(etam).'.*(1-sigmoid(etam)).';
+                %
+                % % Correction factor
+                % dGdtheta = alpha*abs(f_d_opt_0/G_0)*dGdtheta;
+                % dGdeta = alpha*abs(f_d_opt_0/G_0)*dGdeta;
+
+                dphi = [dphidxi,dphidtheta,dphideta];
+            end
+
+            % Compute cost function ( 3-axis MDEIT)
+            function out = f_a_opt_3_axis(img,x,inv_Gamma_prior,inv_Gamma_noise,A)
+
+                sensor_locations = vector_to_sensor_locations(x);
+
+                phi_oed = compute_cost_function_a_opt_3_axis(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A);
+
+                out = phi_oed;
+            end
+
+            function out = f_d_opt_3_axis(img,x,inv_Gamma_prior,inv_Gamma_noise,A)
+
+                sensor_locations = vector_to_sensor_locations(x);
+
+                phi_oed= compute_cost_function_d_opt_3_axis(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A);
+
+                out = phi_oed;
+            end
+
+            % Cost function gradients (3-axis MDEIT). Allow movement in
+            % theta and eta.
+            function dphi = g_a_opt_optimized_3_axis(img,x,Gamma_prior_inv,Gamma_noise_inv,A)
+                sigmoid = @(y) 1./(1+exp(-y));
+                n_sensors = numel(img.fwd_model.sensors);
+
+                x = x(:);
+                rm = R0;
+                thetam = x(1:n_sensors);
+                etam = x(n_sensors+1:2*n_sensors);
+
+                sensor_locations = vector_to_sensor_locations(x);
+
+                dphidp = compute_cost_function_gradient_a_opt_optimized_3_axis(...
+                    img,sensor_locations,Gamma_prior_inv,Gamma_noise_inv,A);
+
+                dphidx = dphidp(1,:);
+                dphidy = dphidp(2,:);
+                dphidz = dphidp(3,:);
+
+                dphidtheta = -rm'.*sin(thetam)'.*dphidx + rm'.*cos(thetam)'.*dphidy;
+                dphideta = 3*dphidz.*sigmoid(etam).'.*(1-sigmoid(etam)).';
+
+                dphi = [dphidtheta,dphideta];
+            end
+
+            function dphi = g_d_opt_optimized_3_axis(img,x,Gamma_prior_inv,Gamma_noise_inv,A)
+                sigmoid = @(y) 1./(1+exp(-y));
+                n_sensors = numel(img.fwd_model.sensors);
+
+                x = x(:);
+                rm = R0;
+                thetam = x(1:n_sensors);
+                etam = x(n_sensors+1:2*n_sensors);
+                sensor_locations = vector_to_sensor_locations(x);
+
+                dphidp = compute_cost_function_gradient_d_opt_optimized_3_axis(...
+                    img,sensor_locations,Gamma_prior_inv,Gamma_noise_inv,A);
+
+                dphidx = dphidp(1,:);
+                dphidy = dphidp(2,:);
+                dphidz = dphidp(3,:);
+
+                dphidtheta = -rm'.*sin(thetam)'.*dphidx + rm'.*cos(thetam)'.*dphidy;
+                dphideta = 3*dphidz.*sigmoid(etam).'.*(1-sigmoid(etam)).';
+
+                dphi = [dphidtheta,dphideta];
+            end
+
+            %% PlotFcns
+
+            function stop = outfun_d_opt(x,optimValues,state)
+                switch state
+                    case 'iter'
+                        % Make updates to plot or guis as needed
+                        this_axis = gca;
+                        sensor_locations_k = vector_to_sensor_locations(x);
+                        img_k = assign_sensor_locations(imgi,sensor_locations_k);
+                        plot_sensors(img_k,false,'r','s',this_axis);
+                        axis([-1.1*R0 1.1*R0 -1.1*R0 1.1*R0 0 model_parameters.height])
+                        box on;grid on;
+                        view(3)
+                        drawnow
+                    case 'interrupt'
+                        % Probably no action here. Check conditions to see
+                        % whether optimization should quit.
+                    case 'init'
+                        hold on
+                        show_fem(imgi);
+                        % camlight;lighting gouraud
+                    case 'done'
+                        % Cleanup of plots, guis, or final plot
+                        this_axis = gca;
+                        sensor_locations_k = vector_to_sensor_locations(x);
+                        img_k = assign_sensor_locations(imgi,sensor_locations_k);
+                        plot_sensors(img_k,false,'b','s',this_axis);
+                        axis([-1.1*R0 1.1*R0 -1.1*R0 1.1*R0 0 model_parameters.height])
+                        box on;grid on;
+                        view(3)
+                        drawnow
+                    otherwise
+                end
+
+                stop = false; %continue
+            end
+
+            function stop = outfun_a_opt(x,optimValues,state)
+                switch state
+                    case 'iter'
+
+                        % Make updates to plot or guis as needed
+                        this_axis = gca;
+                        sensor_locations_k = vector_to_sensor_locations(x);
+                        img_k = assign_sensor_locations(imgi,sensor_locations_k);
+                        plot_sensors(img_k,false,'r','o',this_axis);
+                        axis([-1.1*R0 1.1*R0 -1.1*R0 1.1*R0 0 model_parameters.height])
+                        box on;grid on;
+                        view(3)
+                        drawnow
+                    case 'interrupt'
+                        % Probably no action here. Check conditions to see
+                        % whether optimization should quit.
+                    case 'init'
+                        hold on
+                        show_fem(imgi);
+                        % camlight; lighting gouraud
+
+                    case 'done'
+                        % Cleanup of plots, guis, or final plot
+                        this_axis = gca;
+                        sensor_locations_k = vector_to_sensor_locations(x);
+                        img_k = assign_sensor_locations(imgi,sensor_locations_k);
+                        plot_sensors(img_k,false,'b','x',this_axis);
+                        axis([-1.1*R0 1.1*R0 -1.1*R0 1.1*R0 0 model_parameters.height])
+                        box on;grid on;
+                        view(3)
+                        drawnow
+                    otherwise
+                end
+
+                stop = false; %continue
+            end
+
+            %% Use fmincon
+
+            x0_con = zeros(3*n_sensors,1);
+
+            for m = 1:n_sensors
+                rm =  sqrt(sensor_locations_0(m,1)^2+sensor_locations_0(m,2)^2);
+                thetam = atan2(sensor_locations_0(m,2),sensor_locations_0(m,1));
+                zm = sensor_locations_0(m,3);
+
+                x0_con(m) = rm;
+                x0_con(m+n_sensors) = thetam;
+                x0_con(m+2*n_sensors) = zm;
+            end
+
+            options = optimoptions('fmincon',...
+                'OptimalityTolerance',1e-9,'Display','iter','MaxIterations',max_iteratons, ...
+                'Algorithm','interior-point','HessianApproximation',hessian_approximation,...
+                'SpecifyObjectiveGradient',true,'UseParallel',use_parallel,...
+                PlotFcn=@outfun_a_opt);
+
+            if exist('do_3_axis','var')
+                if do_3_axis
+                    fprintf('Doing 3-axis A-optimality OED - fmincon\n')
+                    fun_a_opt_constrained = @funcwithgrad_a_opt_constrained_3_axis;
+                else
+                    fprintf('Doing 1-axis A-optimality OED - fmincon\n')
+                    fun_a_opt_constrained = @funcwithgrad_a_opt_constrained;
+                end
+            else
+                error('Here');
+            end
+
+            function [f,g] = funcwithgrad_a_opt_constrained(x)
+                % Calculate objective f
+                f = f_a_opt_constrained(imgi,x,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                if nargout > 1 % gradient required
+                    g =  g_a_opt_optimized_constrained(imgi,x,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+                end
+            end
+
+            function [f,g] = funcwithgrad_a_opt_constrained_3_axis(x)
+                % Calculate objective f
+                f = f_a_opt_constrained_3_axis(imgi,x,Gamma_prior_inv,Gamma_noise_inv,A);
+
+                if nargout > 1 % gradient required
+                    g =  g_a_opt_optimized_constrained_3_axis(imgi,x,Gamma_prior_inv,Gamma_noise_inv,A);
+                end
+            end
+
+            lb = [ rmin*ones(1,n_sensors),   -inf(1,n_sensors),   0*ones(1,n_sensors)];
+            ub = [ rmax*ones(1,n_sensors),    inf(1,n_sensors),   model_parameters.height*ones(1,n_sensors) ];
+
+            x_a_opt_con = fmincon(fun_a_opt_constrained,x0_con,[],[],[],[],lb,ub,[],options);
+
+            sensor_locations_a_opt_con = zeros(n_sensors,3);
+
+            for m = 1:n_sensors
+                rm = x_a_opt_con(m);
+                thetam = x_a_opt_con(m+n_sensors);
+                zm = x_a_opt_con(m+2*n_sensors);
+
+                sensor_locations_a_opt_con(m,:) = [rm*cos(thetam),rm*sin(thetam),zm];
+            end
+
+            img_a_opt_con = assign_sensor_locations(imgi,sensor_locations_a_opt_con);
+
+            %% Optimize A-optimality with trust region method native to MATLAB
+            options = optimoptions('fminunc',...
+                'OptimalityTolerance',1e-9,'Display','iter','MaxIterations',max_iteratons, ...
+                'Algorithm', algorithm,'HessianApproximation',hessian_approximation,...
+                'SpecifyObjectiveGradient',true,'UseParallel',use_parallel,...
+                PlotFcn=@outfun_a_opt);
+
+            if exist('do_3_axis','var')
+                if do_3_axis
+                    fprintf('Doing 3-axis A-optimality OED\n')
+                    fun_a_opt = @funcwithgrad_a_opt_3_axis;
+                else
+                    fprintf('Doing 1-axis A-optimality OED\n')
+                    fun_a_opt = @funcwithgrad_a_opt;
+                end
+            else
+                error('Here');
+            end
+
+            function [f,g] = funcwithgrad_a_opt(x)
+                % Calculate objective f
+                f = f_a_opt(imgi,x,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                if nargout > 1 % gradient required
+                    g =  g_a_opt_optimized(imgi,x,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+                end
+            end
+
+            function [f,g] = funcwithgrad_a_opt_3_axis(x)
+                % Calculate objective f
+                f = f_a_opt_3_axis(imgi,x,Gamma_prior_inv,Gamma_noise_inv,A);
+
+                if nargout > 1 % gradient required
+                    g =  g_a_opt_optimized_3_axis(imgi,x,Gamma_prior_inv,Gamma_noise_inv,A);
+                end
+            end
+
+
+            x_a_opt = fminunc(fun_a_opt,x0,options);
+            sensor_locations_a_opt = vector_to_sensor_locations(x_a_opt);
+            img_a_opt = assign_sensor_locations(imgi,sensor_locations_a_opt);
+
+            % Disp proportion of costs
+            if exist('do_3_axis','var')
+                if ~do_3_axis
+                    phi_oed_a_0 = f_a_opt(imgi, x0 ,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+                    phi_oed_a_opt= f_a_opt(imgi, x_a_opt ,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                    G_a_opt = repulsion_cost(sensor_locations_a_opt);
+                    total_cost_a_opt = phi_oed_a_opt + alpha*abs(f_a_opt_0/G_0)*G_a_opt;
+
+                    fprintf('Total cost: %2.2g\n',total_cost_a_opt);
+                    fprintf('OED cost: %2.2g -> %2.2g (%1.2f %%)\n',...se
+                        phi_oed_a_0,phi_oed_a_opt,...
+                        sign(phi_oed_a_opt-phi_oed_a_0)*abs(phi_oed_a_opt-phi_oed_a_0)/abs(phi_oed_a_0)*100);
+                    fprintf('Repulsion cost: %2.2g -> %2.2g (%1.2f %%)\n',...
+                        G_0,G_a_opt,...
+                        sign(G_a_opt-G_0)*abs(G_a_opt-G_0)/abs(G_0)*100);
+                else
+                    phi_oed_a_0 = f_a_opt_3_axis(imgi, x0 ,Gamma_prior_inv,Gamma_noise_inv,A);
+                    phi_oed_a_opt= f_a_opt_3_axis(imgi, x_a_opt ,Gamma_prior_inv,Gamma_noise_inv,A);
+
+                    total_cost_a_opt = phi_oed_a_opt;
+
+                    fprintf('Total cost: %2.2g\n',total_cost_a_opt);
+                    fprintf('OED cost: %2.2g -> %2.2g (%1.2f %%)\n',...se
+                        phi_oed_a_0,phi_oed_a_opt,...
+                        sign(phi_oed_a_opt-phi_oed_a_0)*abs(phi_oed_a_opt-phi_oed_a_0)/abs(phi_oed_a_0)*100);
+                end
+            end
+
+            %% Optimize D-optimality with trust region method native to MATLAB
+
+            options = optimoptions('fminunc',...
+                'OptimalityTolerance',1e-3,'Display','iter','MaxIterations',max_iteratons,...
+                'Algorithm', algorithm,'HessianApproximation',hessian_approximation,...
+                'SpecifyObjectiveGradient',true,'UseParallel',use_parallel,...
+                PlotFcn=@outfun_d_opt);
+            % options = optimoptions(@fminunc,'Display','iter','Algorithm','quasi-newton','SpecifyObjectiveGmax_iteratonsradient',true);
+
+            if exist('do_3_axis','var')
+                if do_3_axis
+                    fprintf('Doing 3-axis D-optimality OED\n')
+                    fun_d_opt = @funcwithgrad_d_opt_3_axis;
+                else
+                    fprintf('Doing 1-axis D-optimality OED\n')
+                    fun_d_opt = @funcwithgrad_d_opt;
+                end
+            else
+                error('Here');
+            end
+
+            function [f,g] = funcwithgrad_d_opt(x)
+                % Calculate objective f
+                f = f_d_opt(imgi,x,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                if nargout > 1 % gradient required
+                    g =  g_d_opt_optimized(imgi,x,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+                end
+            end
+
+            function [f,g] = funcwithgrad_d_opt_3_axis(x)
+                % Calculate objective f
+                f = f_d_opt_3_axis(imgi,x,Gamma_prior_inv,Gamma_noise_inv,A);
+
+                if nargout > 1 % gradient required
+                    g =  g_d_opt_optimized_3_axis(imgi,x,Gamma_prior_inv,Gamma_noise_inv,A);
+                end
+            end
+
+            x_d_opt = fminunc(fun_d_opt,x0,options);
+            sensor_locations_d_opt = vector_to_sensor_locations(x_d_opt);
+            img_d_opt = assign_sensor_locations(imgi,sensor_locations_d_opt);
+
+            % Disp proportion of costs
+            if exist('do_3_axis','var')
+                if ~do_3_axis
+                    phi_oed_d_0 = f_d_opt(imgi,x0,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+                    phi_oed_d_opt= f_d_opt(imgi,x_d_opt,Gamma_prior_inv,Gamma_noise_inv,A,dim);
+
+                    G_d_opt = repulsion_cost(sensor_locations_d_opt);
+                    total_cost_d_opt = phi_oed_d_opt+alpha*abs(f_d_opt_0/G_0)*G_d_opt;
+
+                    fprintf('Total cost: %2.2g\n',total_cost_d_opt);
+                    fprintf('OED cost: %2.2g -> %2.2g (%1.2f %%)\n',...
+                        phi_oed_d_0,phi_oed_d_opt,...
+                        sign(phi_oed_d_opt-phi_oed_d_0)*abs(phi_oed_d_opt-phi_oed_d_0)/abs(phi_oed_d_0)*100);
+                    fprintf('Repulsion cost: %2.2g -> %2.2g (%1.2f %%)\n',...
+                        G_0,G_d_opt,...
+                        sign(G_d_opt-G_0)*abs(G_d_opt-G_0)/abs(G_0)*100);
+                else
+                    phi_oed_d_0 = f_d_opt_3_axis(imgi,x0,Gamma_prior_inv,Gamma_noise_inv,A);
+                    phi_oed_d_opt= f_d_opt_3_axis(imgi,x_d_opt,Gamma_prior_inv,Gamma_noise_inv,A);
+
+                    total_cost_d_opt = phi_oed_d_opt;
+
+                    fprintf('Total cost: %2.2g\n',total_cost_d_opt);
+                    fprintf('OED cost: %2.2g -> %2.2g (%1.2f %%)\n',...
+                        phi_oed_d_0,phi_oed_d_opt,...
+                        sign(phi_oed_d_opt-phi_oed_d_0)*abs(phi_oed_d_opt-phi_oed_d_0)/abs(phi_oed_d_0)*100);
+                end
+            end
+
+
+            %% Plot the optimal sensor locations
+            theta = linspace(0,2*pi,100);
+            [x, y, z] = cylinder(rmin, 50);
+            [x2, y2, z2] = cylinder(rmax, 50);
+            z = z * 3;
+            z2 = z2*3;
+
+
             figure
-            show_fem(img);
-            plot_sensors(img);
-            img = assign_sensor_locations(img,sensor_locations_k);
-            plot_sensors(img,false,'r');
-            box on;grid on;
-            drawnow
-            
+            hold on
+            show_fem(imgi);
+            plot_sensors(img_init);
+            plot_sensors(img_a_opt,false,'g','s');
+            plot_sensors(img_d_opt,false,'r','o');
+            h = plot_sensors(img_a_opt_con,false,'k','s');
 
-            % %% Compute and visualize the cost function in a ball around the initial p-coordinates of the 2 sensors
-            % 
-            % sensor_p_coordinates = zeros(n_sensors,1);
-            % for m = 1:n_sensors
-            %     sensor_p_coordinates(m) = img.fwd_model.sensors(m).position(1);
-            % end
-            % 
-            % sensor_locations_0 = fetch_sensor_locations(img);
-            % 
-            % 
-            % sensor_radius =  sqrt(sensor_locations_0(:,1).^2+sensor_locations_0(:,2).^2);
-            % 
-            % R = 0.05*(min(sensor_radius)-model_parameters.radius);
-            % 
-            % % Number of different positions for each sensor to plot the
-            % % cost function at
-            % N  = 5;
-            % 
-            % sensor_locations_around_ball = zeros(n_sensors,3,N);
-            % 
-            % for m = 1:n_sensors
-            %     for n = 1:3
-            %         if n==p
-            %             sensor_locations_around_ball(m,n,:) = linspace(sensor_p_coordinates(m)-R,sensor_p_coordinates(m)+R,N);
-            %         else
-            %             sensor_locations_around_ball(m,n,:) = ones(N,1)*sensor_locations_0(m,p);
-            %         end
-            %     end
-            % end
-            % 
-            % % Include the starting sensor position in the list of sensor
-            % % positions
-            % % sensor_locations_around_ball = cat(3,sensor_locations_around_ball,sensor_locations_0);
-            % % sensor_locations_around_ball = sort(sensor_locations_around_ball,3);
-            % 
-            % [X1,X2] = meshgrid(sensor_locations_around_ball(1,p,:),sensor_locations_around_ball(2,p,:));
-            % 
-            % % Just a visualization
-            % figure
-            % hold on
-            % show_fem(img);
-            % for i = 1:size(sensor_locations_around_ball,3)
-            %     sensor_locations = sensor_locations_0;
-            %     sensor_locations(1,p) = X1(i,i);
-            %     sensor_locations(2,p) = X2(i,i);
-            %     img_temp = assign_sensor_locations(img,sensor_locations);
-            %     plot_sensors(img_temp)
-            % end
-            % hold off
-            % drawnow;
-            % 
-            % % Compute cost function at different p-coordinates
-            % cost_box = zeros(N,N);
-            % 
-            % for i = 1:size(sensor_locations_around_ball,3)
-            %     for j = 1:size(sensor_locations_around_ball,3)
-            %         fprintf('Evaluating cost (%i/%i)\n',...
-            %             size(sensor_locations_around_ball,3)*(i-1)+j,size(sensor_locations_around_ball,3)^2)
-            % 
-            %         sensor_locations = sensor_locations_0;
-            % 
-            %         sensor_locations(1,p) = X1(i,j);
-            %         sensor_locations(2,p) = X2(i,j);
-            % 
-            %         cost_box(i,j) = compute_cost_function(img,sensor_locations,Gamma_prior,Gamma_noise,A,dim);
-            %     end
-            % end
-            % 
-            % cost_at_initial_position = compute_cost_function(img,sensor_locations_0,Gamma_prior,Gamma_noise,A,dim);
-            % 
-            % % Estimate gradient
-            % % Compute spacing in each direction (assuming uniform grid)
-            % dx = X1(1,2) - X1(1,1);  % spacing along X1 (columns)
-            % dy = X2(2,1) - X2(1,1);  % spacing along X2 (rows)
-            % 
-            % % Compute numerical gradient
-            % [phi_x, phi_y] = gradient(cost_box, dx, dy);
-            % %% Plot cost function
-            % norm_dphip = sqrt(dphidp(1)^2+dphidp(2)^2);
-            % norm_phi = sqrt(phi_x.^2+phi_y.^2);
-            % scale = abs(max(X1(:))-min(X1(:)));
-            % figure
-            % hold on
-            % quiver3(sensor_locations_0(1,1),sensor_locations_0(2,1),cost_at_initial_position,...
-            %     dphidp(1)/norm_dphip,dphidp(2)/norm_dphip,0,...
-            %     scale,'LineStyle','-');
-            % quiver3(X1,X2,cost_box,...
-            %     phi_x./norm_phi ,phi_y./norm_phi ,zeros(size(phi_x)),...
-            %     10*scale,'LineStyle','--')
-            % plot3(sensor_locations_0(1,1),sensor_locations_0(2,1),cost_at_initial_position,'r.','MarkerSize',10)
-            % mesh(X1,X2,cost_box);
-            % xlabel('$p$-coordinate of sensor $1$','Interpreter','latex')
-            % ylabel('$p$-coordinate of sensor $2$','Interpreter','latex')
-            % box on;grid on;grid minor;
-            % axis('square')
-            % hold off
+            hold on
+            hSurf = surf(h,x, y, z);
+            set(hSurf, 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'FaceColor', 'red')
+            hSurf2 = surf(h,x2, y2, z2);
+            set(hSurf2, 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'FaceColor', 'blue')
+            plot3(h,R0*cos(theta),R0*sin(theta),model_parameters.height/2*ones(size(theta)),'LineStyle','--','Color','b')
+            axis([-1.1*rmax 1.1*rmax -1.1*rmax 1.1*rmax 0 model_parameters.height])
+            hold off
+            box on;grid on;
+            camlight; lighting gouraud
+            drawnow
         end
 
     end
@@ -1772,6 +3344,158 @@ end
 
 end
 
+function dR = dRmkj_xyz(fmdl,j)
+coord = [    0.0000000000000000  0.0000000000000000  0.0000000000000000
+    0.0000000000000000  0.0000000000000000  1.0000000000000000
+    0.0000000000000000  1.0000000000000000  0.0000000000000000
+    1.0000000000000000  0.0000000000000000  0.0000000000000000
+    0.0000000000000000  0.0000000000000000  0.7500000000000000
+    0.0000000000000000  0.0000000000000000  0.2500000000000000
+    0.0000000000000000  0.7500000000000000  0.0000000000000000
+    0.0000000000000000  0.7500000000000000  0.2500000000000000
+    0.0000000000000000  0.2500000000000000  0.0000000000000000
+    0.0000000000000000  0.2500000000000000  0.7500000000000000
+    0.7500000000000000  0.0000000000000000  0.0000000000000000
+    0.7500000000000000  0.0000000000000000  0.2500000000000000
+    0.7500000000000000  0.2500000000000000  0.0000000000000000
+    0.2500000000000000  0.0000000000000000  0.0000000000000000
+    0.2500000000000000  0.0000000000000000  0.7500000000000000
+    0.2500000000000000  0.7500000000000000  0.0000000000000000
+    0.5000000000000000  0.5000000000000000  0.0000000000000000
+    0.5000000000000000  0.0000000000000000  0.5000000000000000
+    0.5000000000000000  0.0000000000000000  0.0000000000000000
+    0.0000000000000000  0.5000000000000000  0.5000000000000000
+    0.0000000000000000  0.5000000000000000  0.0000000000000000
+    0.0000000000000000  0.0000000000000000  0.5000000000000000
+    0.2500000000000000  0.2500000000000000  0.0000000000000000
+    0.2500000000000000  0.2500000000000000  0.5000000000000000
+    0.2500000000000000  0.0000000000000000  0.2500000000000000
+    0.2500000000000000  0.0000000000000000  0.5000000000000000
+    0.2500000000000000  0.5000000000000000  0.2500000000000000
+    0.2500000000000000  0.5000000000000000  0.0000000000000000
+    0.0000000000000000  0.2500000000000000  0.2500000000000000
+    0.0000000000000000  0.2500000000000000  0.5000000000000000
+    0.0000000000000000  0.5000000000000000  0.2500000000000000
+    0.5000000000000000  0.2500000000000000  0.2500000000000000
+    0.5000000000000000  0.2500000000000000  0.0000000000000000
+    0.5000000000000000  0.0000000000000000  0.2500000000000000
+    0.2500000000000000  0.2500000000000000  0.2500000000000000];
+
+weights = [  -0.0119047619047619
+    -0.0119047619047619
+    -0.0119047619047619
+    -0.0119047619047619
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    -0.0285714285714286
+    -0.0285714285714286
+    -0.0285714285714286
+    -0.0285714285714286
+    -0.0285714285714286
+    -0.0285714285714286
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.0380952380952381
+    0.3047619047619048];
+
+numElements = size(fmdl.elems,1);
+numSensors  = numel(fmdl.sensors);
+numQuadPts  = length(weights);
+
+% --- Precompute element vertices ---
+% V: 4 x 3 x numElements
+% Stack vertices: 4 x numElements x 3
+V = reshape(fmdl.nodes(fmdl.elems',:), [4, numElements, 3]);
+
+v1 = squeeze(V(1,:,:));  % numElements x 3
+v2 = squeeze(V(2,:,:));
+v3 = squeeze(V(3,:,:));
+v4 = squeeze(V(4,:,:));
+
+% Initialize J
+J = zeros(3,3,numElements);  % 3 x 3 x numElements
+
+% Fill J using transpose of row vectors
+J(:,1,:) = permute(v2 - v1, [2 3 1]);  % 3 x 1 x numElements
+J(:,2,:) = permute(v3 - v1, [2 3 1]);
+J(:,3,:) = permute(v4 - v1, [2 3 1]);
+
+% Determinants of all J
+detJ = zeros(1,numElements);
+for k = 1:numElements
+    detJ(k) = abs(det(J(:,:,k)));
+end
+
+% --- Compute dRdp for all sensors, and for all p ---
+dRdx = zeros(numSensors,numElements);
+dRdy = zeros(numSensors,numElements);
+dRdz = zeros(numSensors,numElements);
+
+
+
+for m = 1:numSensors
+    rm = fmdl.sensors(m).position;  % 1 x 3
+
+    % Evaluate quadrature points in all elements
+    % xi: numQuadPts x 3 x numElements
+    xi = reshape(v1', [3,1,numElements]) + ...
+        J(:,1,:).*reshape(coord(:,1),[1,numQuadPts,1]) + ...
+        J(:,2,:).*reshape(coord(:,2),[1,numQuadPts,1]) + ...
+        J(:,3,:).*reshape(coord(:,3),[1,numQuadPts,1]); % 3 x numQuadPts x numElements
+
+    xi = permute(xi,[2 1 3]); % numQuadPts x 3 x numElements
+
+    % dm_vec = rm - xi, same size
+    dm_vec = rm - xi; % numQuadPts x 3 x numElements
+
+    dm_norm2 = sum(dm_vec.^2,2);           % numQuadPts x 1 x numElements
+    dm_j    = dm_vec(:,j,:);               % numQuadPts x 1 x numElements
+
+    for p = 1:3
+        % Compute fun values at all quadrature points
+        % ((j==p)*norm(dm)^2 - 3*dm_j*dm_p) / norm(dm)^5
+
+        dm_p    = dm_vec(:,p,:);
+
+        funvals = ((j==p)*dm_norm2 - 3*dm_j.*dm_p) ./ (dm_norm2.^(5/2)); % numQuadPts x 1 x numElements
+
+        % Integrate over quadrature points using weights
+        switch p
+            case 1
+                dRdx(m,:) = squeeze(sum(funvals .* reshape(weights, [numQuadPts,1,1]),1))' .* (detJ/6);
+            case 2
+                dRdy(m,:) = squeeze(sum(funvals .* reshape(weights, [numQuadPts,1,1]),1))' .* (detJ/6);
+            case 3
+                dRdz(m,:) = squeeze(sum(funvals .* reshape(weights, [numQuadPts,1,1]),1))' .* (detJ/6);
+        end
+    end
+end
+
+dR = {dRdx,dRdy,dRdz};
+
+end
+
+
+
 function [dlambda,dR1,dR2] = compute_dlambda_ds(img,dim,p)
 
 num_sensors = numel(img.fwd_model.sensors);
@@ -1826,6 +3550,152 @@ parfor m = 1:num_sensors
 end
 
 end
+
+
+function [dlambda,dR1,dR2] = compute_dlambda_xyz(img,dim)
+
+num_sensors = numel(img.fwd_model.sensors);
+n_nodes = size(img.fwd_model.nodes,1);
+
+dlambdaX = zeros(n_nodes,num_sensors);
+dlambdaY = zeros(n_nodes,num_sensors);
+dlambdaZ = zeros(n_nodes,num_sensors);
+
+mu_factor = img.fwd_model.mu0/(4*pi);
+
+G = img.fwd_model.G;
+
+switch dim
+    case 1
+        dR1 = dRmkj_xyz(img.fwd_model, 3);
+        dR2 = dRmkj_xyz(img.fwd_model, 2);
+
+        G1 = G.Gy;
+        G2 = G.Gz;
+    case 2
+        dR1  = dRmkj_xyz(img.fwd_model, 1);
+        dR2 = dRmkj_xyz(img.fwd_model, 3);
+
+        G1 = G.Gz;
+        G2 = G.Gx;
+    case 3
+        dR1 = dRmkj_xyz(img.fwd_model, 2);
+        dR2 = dRmkj_xyz(img.fwd_model, 1);
+
+        G1 = G.Gx;
+        G2 = G.Gy;
+    otherwise
+        error('Invalid dimension');
+end
+
+sigma = img.elem_data;
+A_matrix = M(img,sigma);
+
+% Jacobi preconditioner - matrix free
+d = sqrt(diag(A_matrix));        % vector of diagonal entries
+
+Mfun = @(x) x ./ d;              % left preconditioner  M^{-1} x
+Nfun = @(x) x ./ d;              % right preconditioner
+
+% Multiply elementwise by sigma (diagonal) without creating sparse diagonal matrix
+% rhs = mu_factor*( dR1 * Sigma * G1 -  dR2* Sigma * G2);
+rhs1 = mu_factor*( (dR1{1} .* sigma.')*G1 - (dR2{1} .* sigma.')*G2 );
+rhs2 = mu_factor*( (dR1{2} .* sigma.')*G1 - (dR2{2} .* sigma.')*G2 );
+rhs3 = mu_factor*( (dR1{3} .* sigma.')*G1 - (dR2{3} .* sigma.')*G2 );
+
+parfor m = 1:num_sensors
+
+    [dlambdaX(:,m),~,~] = pcg(A_matrix,rhs1(m,:)',1e-9,numel(sigma),Mfun,Nfun);
+    [dlambdaY(:,m),~,~] = pcg(A_matrix,rhs2(m,:)',1e-9,numel(sigma),Mfun,Nfun);
+    [dlambdaZ(:,m),~,~] = pcg(A_matrix,rhs3(m,:)',1e-9,numel(sigma),Mfun,Nfun);
+end
+
+dlambda = {dlambdaX,dlambdaY,dlambdaZ};
+
+end
+
+
+function [dlambda,dR1t,dR2t] = compute_dlambdaxyz_xyz(img)
+
+num_sensors = numel(img.fwd_model.sensors);
+n_nodes = size(img.fwd_model.nodes,1);
+
+dlambda = cell(3,3);
+
+dlambdaX = zeros(n_nodes,num_sensors);
+dlambdaY = zeros(n_nodes,num_sensors);
+dlambdaZ = zeros(n_nodes,num_sensors);
+
+dR1t = cell(3,3);
+dR2t = cell(3,3);
+
+
+mu_factor = img.fwd_model.mu0/(4*pi);
+
+G = img.fwd_model.G;
+
+sigma = img.elem_data;
+A_matrix = M(img,sigma);
+
+% Jacobi preconditioner - matrix free
+d = sqrt(diag(A_matrix));        % vector of diagonal entries
+
+Mfun = @(x) x ./ d;              % left preconditioner  M^{-1} x
+Nfun = @(x) x ./ d;              % right preconditioner
+
+for dim = 1:3
+
+    switch dim
+        case 1
+            dR1 = dRmkj_xyz(img.fwd_model, 3);
+            dR2 = dRmkj_xyz(img.fwd_model, 2);
+
+            G1 = G.Gy;
+            G2 = G.Gz;
+        case 2
+            dR1  = dRmkj_xyz(img.fwd_model, 1);
+            dR2 = dRmkj_xyz(img.fwd_model, 3);
+
+            G1 = G.Gz;
+            G2 = G.Gx;
+        case 3
+            dR1 = dRmkj_xyz(img.fwd_model, 2);
+            dR2 = dRmkj_xyz(img.fwd_model, 1);
+
+            G1 = G.Gx;
+            G2 = G.Gy;
+    end
+
+    % Multiply elementwise by sigma (diagonal) without creating sparse diagonal matrix
+    % rhs = mu_factor*( dR1 * Sigma * G1 -  dR2* Sigma * G2);
+
+    rhs1 = mu_factor*( (dR1{1} .* sigma.')*G1 - (dR2{1} .* sigma.')*G2 ); %for p=1
+    rhs2 = mu_factor*( (dR1{2} .* sigma.')*G1 - (dR2{2} .* sigma.')*G2 ); %for p=2
+    rhs3 = mu_factor*( (dR1{3} .* sigma.')*G1 - (dR2{3} .* sigma.')*G2 ); %for p=3
+
+    parfor m = 1:num_sensors
+
+        [dlambdaX(:,m),~,~] = pcg(A_matrix,rhs1(m,:)',1e-9,numel(sigma),Mfun,Nfun);
+        [dlambdaY(:,m),~,~] = pcg(A_matrix,rhs2(m,:)',1e-9,numel(sigma),Mfun,Nfun);
+        [dlambdaZ(:,m),~,~] = pcg(A_matrix,rhs3(m,:)',1e-9,numel(sigma),Mfun,Nfun);
+    end
+
+    dlambda{dim,1} = dlambdaX;
+    dlambda{dim,2} = dlambdaY;
+    dlambda{dim,3} = dlambdaZ;
+
+    dR1t{dim,1} = dR1{1};
+    dR1t{dim,2} = dR1{2};
+    dR1t{dim,3} = dR1{3};
+
+    dR2t{dim,1} = dR2{1};
+    dR2t{dim,2} = dR2{2};
+    dR2t{dim,3} = dR2{3};
+end
+
+end
+
+
 
 function dB = compute_dB_ds(img,dim,p)
 
@@ -1955,6 +3825,183 @@ end
 dJ = dJ1 - dJ2;
 
 end
+
+function [dJ,dJ1,dJ2] = compute_dJ_xyz(img,dim)
+% Computes derivative of the Jacobian w.r.t. sensor positions
+% Vectorized over elements and stimulations, loop only over sensors
+
+num_sensors = numel(img.fwd_model.sensors);
+n_elem      = size(img.fwd_model.elems,1);
+num_stim    = numel(img.fwd_model.stimulation);
+
+mu_factor = img.fwd_model.mu0/(4*pi);
+
+G = img.fwd_model.G;
+
+% Element volumes
+elemV = img.fwd_model.elem_volume(:);  % n_elem x 1
+
+% Compute EIT forward solution for each current injection pattern
+u = fwd_solve(img);
+u = u.volt;
+
+% G*u for all stim, size: n_elem x num_stim
+GxU = G.Gx*u;
+GyU = G.Gy*u;
+GzU = G.Gz*u;
+
+% Compute derivative of lambda w.r.t sensor positions (output dR1 and dR2
+% to avoid recomputing)
+[dlambda,dR1dp,dR2dp] = compute_dlambda_xyz(img,dim);
+
+% Compute derivatives of R w.r.t sensor positions
+switch dim
+    case 1
+        G1U = GyU;
+        G2U = GzU;
+    case 2
+        G1U = GzU;
+        G2U = GxU;
+    case 3
+        G1U = GxU;
+        G2U = GyU;
+    otherwise
+        error('Dimension not supported.');
+end
+
+% Preallocate
+dJ = cell(1,3);
+dJ1 = zeros(num_sensors,num_stim,n_elem);
+dJ2 = zeros(num_sensors,num_stim,n_elem);
+
+%% Loop only over sensors
+for p = 1:3
+    for m = 1:num_sensors
+        %% --- dJ1: contribution from dlambda ---
+        % dlambda * G matrices, size: n_elem x 1
+        dlGx = G.Gx*dlambda{p}(:,m);
+        dlGy = G.Gy*dlambda{p}(:,m);
+        dlGz = G.Gz*dlambda{p}(:,m);
+
+        % Elementwise multiplication and sum over components
+        % tmp: n_elem x num_stim
+        tmp = dlGx .* GxU + dlGy .* GyU + dlGz .* GzU;
+
+        % Multiply by element volumes, permute to [num_stim x n_elem]
+        dJ1(m,:,:) = tmp.' .* elemV(:).';
+
+        %% --- dJ2: contribution from dR/dp ---
+        % dRydp, dRzdp: 1 x n_elem
+        % Multiply by G*u per stimulation, permute to [num_stim x n_elem]
+        dJ2(m,:,:) = -mu_factor * ( ...
+            dR2dp{p}(m,:) .* G2U.' - dR1dp{p}(m,:) .* G1U.' ...
+            );
+    end
+
+    %% Total derivative
+    dJ{p} = dJ1 - dJ2;
+end
+
+end
+
+function dJ = compute_dJxyz_xyz(img)
+% Computes derivative of the Jacobian w.r.t. sensor positions
+% Vectorized over elements and stimulations, loop only over sensors
+
+num_sensors = numel(img.fwd_model.sensors);
+n_elem      = size(img.fwd_model.elems,1);
+num_stim    = numel(img.fwd_model.stimulation);
+
+mu_factor = img.fwd_model.mu0/(4*pi);
+
+G = img.fwd_model.G;
+
+% Element volumes
+elemV = img.fwd_model.elem_volume(:);  % n_elem x 1
+
+% Compute EIT forward solution for each current injection pattern
+u = fwd_solve(img);
+u = u.volt;
+
+% G*u for all stim, size: n_elem x num_stim
+GxU = G.Gx*u;
+GyU = G.Gy*u;
+GzU = G.Gz*u;
+
+% Compute derivative of lambda w.r.t sensor positions (output dR1 and dR2
+% to avoid recomputing)
+[dlambda,dR1dp,dR2dp] = compute_dlambdaxyz_xyz(img);
+
+% Compute derivatives of R w.r.t sensor positions
+G1U = cell(1,3);
+G2U = cell(1,3);
+
+for dim = 1:3
+    switch dim
+        case 1
+            G1U{dim} = GyU;
+            G2U{dim} = GzU;
+        case 2
+            G1U{dim} = GzU;
+            G2U{dim} = GxU;
+        case 3
+            G1U{dim} = GxU;
+            G2U{dim} = GyU;
+        otherwise
+            error('Dimension not supported.');
+    end
+end
+
+% Preallocate
+dJ = cell(3,3);
+
+dJ1 = zeros(num_sensors,num_stim,n_elem);
+dJ2 = zeros(num_sensors,num_stim,n_elem);
+
+
+%% Loop only over sensors
+for dim = 1:3
+    for p = 1:3
+        for m = 1:num_sensors
+            %% --- dJ1: contribution from dlambda ---
+            % dlambda * G matrices, size: n_elem x 1
+            dlGx = G.Gx*dlambda{p}(:,m);
+            dlGy = G.Gy*dlambda{p}(:,m);
+            dlGz = G.Gz*dlambda{p}(:,m);
+
+            % Elementwise multiplication and sum over components
+            % tmp: n_elem x num_stim
+            tmp = dlGx .* GxU + dlGy .* GyU + dlGz .* GzU;
+
+            % Multiply by element volumes, permute to [num_stim x n_elem]
+            dJ1(m,:,:) = tmp.' .* elemV(:).';
+
+            %% --- dJ2: contribution from dR/dp ---
+            switch dim
+                case 1
+                    dJ2(m,:,:) = -mu_factor * ( ...
+                        dR2dp{dim,p}(m,:) .* G2U{dim}.' - dR1dp{dim,p}(m,:) .* G1U{dim}.' ...
+                        );
+                case 2
+                    dJ2(m,:,:) = -mu_factor * ( ...
+                        dR2dp{dim,p}(m,:) .* G2U{dim}.' - dR1dp{dim,p}(m,:) .* G1U{dim}.' ...
+                        );
+                case 3
+                    dJ2(m,:,:) = -mu_factor * ( ...
+                        dR2dp{dim,p}(m,:) .* G2U{dim}.' - dR1dp{dim,p}(m,:) .* G1U{dim}.' ...
+                        );
+            end
+
+
+        end
+
+        %% Total derivative
+        dJ{dim,p} = dJ1 - dJ2;
+    end
+end
+end
+
+
 
 function J = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,select_sensor_axis)
 
@@ -2090,10 +4137,8 @@ J = reshape(dfd, num_sensors*num_stim, n_elem);
 return
 end
 
-
-
-
-function cost = compute_cost_function(img,sensor_locations,Gamma_prior,Gamma_noise,A,dim)
+% For 1 axis-MDEIT
+function cost = compute_cost_function_d_opt(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A,dim)
 
 n_sensors = numel(img.fwd_model.sensors);
 n_stim = numel(img.fwd_model.stimulation);
@@ -2106,14 +4151,156 @@ img = assign_sensor_locations(img,sensor_locations);
 J = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,dim);
 
 % Define the inverse posterior covariance matrix
-H = J.'*inv(Gamma_noise)*J+inv(Gamma_prior);
+H = J.'*inv_Gamma_noise*J+inv_Gamma_prior;
+
+L = chol(H,'lower');
+logdetH = 2*sum(log(diag(L)));
+
+cost = -logdetH;
+end
+
+function cost = compute_cost_function_a_opt(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A,dim)
+
+n_sensors = numel(img.fwd_model.sensors);
+n_stim = numel(img.fwd_model.stimulation);
+n_elem = size(img.fwd_model.elems,1);
+
+% Assign sensor locations
+img = assign_sensor_locations(img,sensor_locations);
+
+% Compute the jacobian at current sensor locations
+J = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,dim);
+
+% Define the inverse posterior covariance matrix
+H = J.'*inv_Gamma_noise*J+inv_Gamma_prior;
+
+% L = chol(H,'lower');
+% cost = sum(1./diag(L).^2);
 
 cost = trace(inv(H));
 end
 
 
-function dphidp = compute_cost_function_gradient(...
-    img,sensor_locations,Gamma_prior,Gamma_noise,A,dim,p)
+% For 3 axis-MDEIT
+function cost = compute_cost_function_d_opt_3_axis(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A)
+% Assign sensor locations
+img = assign_sensor_locations(img,sensor_locations);
+
+% Compute the jacobian at current sensor locations
+Jx = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,1);
+Jy = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,2);
+Jz = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,3);
+
+J = [Jx;Jy;Jz];
+
+% Define the inverse posterior covariance matrix
+H = J.'*inv_Gamma_noise*J+inv_Gamma_prior;
+
+L = chol(H,'lower');
+logdetH = 2*sum(log(diag(L)));
+
+cost = -logdetH;
+end
+
+function cost = compute_cost_function_a_opt_3_axis(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A)
+
+% Assign sensor locations
+img = assign_sensor_locations(img,sensor_locations);
+
+% Compute the jacobian at current sensor locations
+Jx = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,1);
+Jy = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,2);
+Jz = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,3);
+
+J = [Jx;Jy;Jz];
+
+% Define the inverse posterior covariance matrix
+H = J.'*inv_Gamma_noise*J+inv_Gamma_prior;
+
+% L = chol(H,'lower');
+% cost = sum(1./diag(L).^2);
+
+cost = trace(inv(H));
+end
+
+
+
+
+
+function G = repulsion_cost(sensor_locations)
+
+n_sensors = size(sensor_locations,1);
+
+% --- pairwise differences ---
+% Expand coordinates
+X = sensor_locations(:,1);
+Y = sensor_locations(:,2);
+Z = sensor_locations(:,3);
+
+DX = X - X.';    % [n_sensors x n_sensors]
+DY = Y - Y.';
+DZ = Z - Z.';
+
+% Squared distances
+D2 = DX.^2 + DY.^2 + DZ.^2+ 1e-12; %smooth correction
+
+% --- Cost ---
+invD2 = 1 ./ D2;
+
+% remove diagonal
+invD2(1:n_sensors+1:end) = 0;
+
+% sum only i<j. We sum repeated pairs (i,j) and (j,i), so we multiply by
+% 0.5
+G = 0.5 * sum(invD2(:));
+
+end
+
+function [dGx,dGy,dGz] = repulsion_grad_cartesian(sensor_locations)
+
+n_sensors = size(sensor_locations,1);
+
+% --- pairwise differences ---
+% Expand coordinates
+X = sensor_locations(:,1);
+Y = sensor_locations(:,2);
+Z = sensor_locations(:,3);
+
+DX = X - X.';    % [n_sensors x n_sensors]
+DY = Y - Y.';
+DZ = Z - Z.';
+
+% Squared distances
+D2 = DX.^2 + DY.^2 + DZ.^2+ 1e-12; %smooth correction
+
+% --- Cost ---
+invD2 = 1 ./ D2;
+
+% remove diagonal
+invD2(1:n_sensors+1:end) = 0;
+
+% We need 1/d^4
+invD4 = invD2.^2;
+
+% Compute force matrix coefficients
+C = -2 * invD4;
+
+% zero diagonal
+C(1:n_sensors+1:end) = 0;
+
+% Each gradient component is:
+% dG_i = sum_j C_ij * (p_i - p_j)
+
+dGx = sum(C .* DX, 2);
+dGy = sum(C .* DY, 2);
+dGz = sum(C .* DZ, 2);
+
+end
+
+
+
+function dphidp = compute_cost_function_gradient_d_opt(...
+    img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A,dim,p)
 
 n_sensors = numel(img.fwd_model.sensors);
 n_stim = numel(img.fwd_model.stimulation);
@@ -2129,10 +4316,10 @@ J = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,dim);
 dJds = compute_dJ_ds(img,dim,p);
 
 % Define the inverse posterior covariance matrix
-H = J.'*inv(Gamma_noise)*J+inv(Gamma_prior);
+H = J.'*inv_Gamma_noise*J+inv_Gamma_prior;
 
-% Intermediate variable W
-W =  inv(Gamma_noise)*J*(inv(H)^2); %[n_stim*n_sensors,n_elem]
+% Intermediate variable W (different in a-opt to d-opt)
+W =  inv_Gamma_noise*J*(inv(H)); %[n_stim*n_sensors,n_elem]
 
 % Compute the derivative of the cost w.r.t. the p-coordinate of
 % the sensor
@@ -2146,6 +4333,279 @@ for m = 1:n_sensors
     dphidp(m) = temp;
 end
 
+end
+
+function dphidp = compute_cost_function_gradient_a_opt(...
+    img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A,dim,p)
+
+n_sensors = numel(img.fwd_model.sensors);
+n_stim = numel(img.fwd_model.stimulation);
+n_elem = size(img.fwd_model.elems,1);
+
+% Assign sensor locations
+img = assign_sensor_locations(img,sensor_locations);
+
+% Compute the jacobian at current sensor locations
+J = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,dim);
+
+% Compute the Jacobian derivative w.r.t sensor positions
+dJds = compute_dJ_ds(img,dim,p);
+
+% Define the inverse posterior covariance matrix
+H = J.'*inv_Gamma_noise*J+inv_Gamma_prior;
+
+% Intermediate variable W (different in a-opt to d-opt)
+W =  inv_Gamma_noise*J*(inv(H)^2); %[n_stim*n_sensors,n_elem]
+
+% Compute the derivative of the cost w.r.t. the p-coordinate of
+% the sensor
+dphidp = zeros(1,n_sensors);
+for m = 1:n_sensors
+    temp = 0.0;
+    for l = 1:n_stim
+        id = m+(l-1)*n_sensors;
+        temp = temp -2*sum(W(id,:) .* squeeze(dJds(m,l,:)).'); % Frobenius inner product
+    end
+    dphidp(m) = temp;
+end
+
+end
+
+
+% For 1-axis MDEIT
+function dphidp = compute_cost_function_gradient_d_opt_optimized(...
+    img,sensor_locations,Gamma_prior_inv,Gamma_noise_inv,A,dim)
+
+n_sensors = numel(img.fwd_model.sensors);
+n_stim = numel(img.fwd_model.stimulation);
+n_elem = size(img.fwd_model.elems,1);
+
+img = assign_sensor_locations(img,sensor_locations);
+
+J = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,dim);
+dJds = compute_dJ_xyz(img,dim);
+
+H = J.'*Gamma_noise_inv*J + Gamma_prior_inv;
+
+L = chol(H,'lower');
+
+% Compute H^{-2} through Cholesky factorization and linear system solves
+
+% Solve L'Y = I -> LH^{-1} = Y -> L'W = H^{-1} -> L H^{-2} = W
+Y = L'\eye(n_elem);
+invH = L\Y;
+
+W = Gamma_noise_inv*J*invH;
+
+dphidp = zeros(3,n_sensors);
+
+for p = 1:3
+    for m = 1:n_sensors
+        ids = m : n_sensors : n_sensors*n_stim;
+
+        dJm = reshape(dJds{p}(m,:,:), [n_stim, n_elem]);
+        Wm  = W(ids,:);
+
+        dphidp(p,m) = -2 * sum(Wm(:) .* dJm(:));
+    end
+end
+
+end
+
+function dphidp = compute_cost_function_gradient_a_opt_optimized(...
+    img,sensor_locations,Gamma_prior_inv,Gamma_noise_inv,A,dim)
+
+n_sensors = numel(img.fwd_model.sensors);
+n_stim = numel(img.fwd_model.stimulation);
+n_elem = size(img.fwd_model.elems,1);
+
+img = assign_sensor_locations(img,sensor_locations);
+
+J = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,dim);
+dJds = compute_dJ_xyz(img,dim);
+
+H = J.'*Gamma_noise_inv*J + Gamma_prior_inv;
+
+L = chol(H,'lower');
+
+% Compute H^{-2} through Cholesky factorization and linear system solves
+
+% Solve L'Y = I -> LH^{-1} = Y -> L'W = H^{-1} -> L H^{-2} = W
+Y = L'\eye(n_elem);
+X = L\Y;
+W = L'\X;
+inv_H2 = L\W;
+
+W = Gamma_noise_inv*J*inv_H2;
+
+dphidp = zeros(3,n_sensors);
+
+for p = 1:3
+    for m = 1:n_sensors
+        ids = m : n_sensors : n_sensors*n_stim;
+
+        dJm = reshape(dJds{p}(m,:,:), [n_stim, n_elem]);
+        Wm  = W(ids,:);
+
+        dphidp(p,m) = -2 * sum(Wm(:) .* dJm(:));
+    end
+end
+
+end
+
+
+% For 3-axis MDEIT
+function dphidp = compute_cost_function_gradient_a_opt_optimized_3_axis(...
+    img,sensor_locations,Gamma_prior_inv,Gamma_noise_inv,A)
+
+n_sensors = numel(img.fwd_model.sensors);
+n_stim = numel(img.fwd_model.stimulation);
+n_elem = size(img.fwd_model.elems,1);
+
+img = assign_sensor_locations(img,sensor_locations);
+
+Jx = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,1);
+Jy = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,2);
+Jz = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,3);
+
+% dJxds2 = compute_dJ_xyz(img,1);
+dJ = compute_dJxyz_xyz(img);
+
+dJxds = cell(1,3);
+dJyds = cell(1,3);
+dJzds = cell(1,3);
+
+for p = 1:3
+    dJxds{p} = dJ{1,p};
+    dJyds{p} = dJ{2,p};
+    dJzds{p} = dJ{3,p};
+end
+
+J = [Jx;Jy;Jz];
+
+H = J.'*Gamma_noise_inv*J + Gamma_prior_inv;
+
+L = chol(H,'lower');
+
+% Compute H^{-2} through Cholesky factorization and linear system solves
+
+% Solve L'Y = I -> LH^{-1} = Y -> L'W = H^{-1} -> L H^{-2} = W
+Y = L'\eye(n_elem);
+X = L\Y;
+W = L'\X;
+inv_H2 = L\W;
+
+% THis is wrong I think
+% Y = L \ (L' \ J');      % H^{-1} J'
+% Z = L \ (L' \ Y);       % H^{-2} J'
+% W = Gamma_noise_inv * J * Z';
+
+
+W = Gamma_noise_inv*J*inv_H2;
+
+dphidp = zeros(3,n_sensors);
+
+block_size = n_sensors * n_stim;
+
+for p = 1:3
+    for m = 1:n_sensors
+        % indices inside one block (x, y, or z)
+        ids_local = m : n_sensors : block_size;
+
+        % --- X component ---
+        ids_x = ids_local;
+        dJx_m = reshape(dJxds{p}(m,:,:), [n_stim, n_elem]);
+        Wx_m  = W(ids_x,:);
+        term_x = sum(Wx_m(:) .* dJx_m(:));
+
+        % --- Y component ---
+        ids_y = ids_local + block_size;
+        dJy_m = reshape(dJyds{p}(m,:,:), [n_stim, n_elem]);
+        Wy_m  = W(ids_y,:);
+        term_y = sum(Wy_m(:) .* dJy_m(:));
+
+        % --- Z component ---
+        ids_z = ids_local + 2*block_size;
+        dJz_m = reshape(dJzds{p}(m,:,:), [n_stim, n_elem]);
+        Wz_m  = W(ids_z,:);
+        term_z = sum(Wz_m(:) .* dJz_m(:));
+
+        dphidp(p,m) = -2 * (term_x + term_y + term_z);
+    end
+end
+end
+
+
+function dphidp = compute_cost_function_gradient_d_opt_optimized_3_axis(...
+    img,sensor_locations,Gamma_prior_inv,Gamma_noise_inv,A)
+
+n_sensors = numel(img.fwd_model.sensors);
+n_stim = numel(img.fwd_model.stimulation);
+n_elem = size(img.fwd_model.elems,1);
+
+img = assign_sensor_locations(img,sensor_locations);
+
+Jx = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,1);
+Jy = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,2);
+Jz = calc_jacobian_1axis_direct_fully_vectorized_local(img,A,3);
+
+% dJxds2 = compute_dJ_xyz(img,1);
+dJ = compute_dJxyz_xyz(img);
+
+dJxds = cell(1,3);
+dJyds = cell(1,3);
+dJzds = cell(1,3);
+
+for p = 1:3
+    dJxds{p} = dJ{1,p};
+    dJyds{p} = dJ{2,p};
+    dJzds{p} = dJ{3,p};
+end
+
+J = [Jx;Jy;Jz];
+
+H = J.'*Gamma_noise_inv*J + Gamma_prior_inv;
+
+L = chol(H,'lower');
+
+% Compute H^{-2} through Cholesky factorization and linear system solves
+
+% Solve L'Y = I -> LH^{-1} = Y -> L'W = H^{-1} -> L H^{-2} = W
+Y = L'\eye(n_elem);
+invH = L\Y;
+
+W = Gamma_noise_inv*J*invH;
+
+dphidp = zeros(3,n_sensors);
+
+block_size = n_sensors * n_stim;
+
+for p = 1:3
+    for m = 1:n_sensors
+        % indices inside one block (x, y, or z)
+        ids_local = m : n_sensors : block_size;
+
+        % --- X component ---
+        ids_x = ids_local;
+        dJx_m = reshape(dJxds{p}(m,:,:), [n_stim, n_elem]);
+        Wx_m  = W(ids_x,:);
+        term_x = sum(Wx_m(:) .* dJx_m(:));
+
+        % --- Y component ---
+        ids_y = ids_local + block_size;
+        dJy_m = reshape(dJyds{p}(m,:,:), [n_stim, n_elem]);
+        Wy_m  = W(ids_y,:);
+        term_y = sum(Wy_m(:) .* dJy_m(:));
+
+        % --- Z component ---
+        ids_z = ids_local + 2*block_size;
+        dJz_m = reshape(dJzds{p}(m,:,:), [n_stim, n_elem]);
+        Wz_m  = W(ids_z,:);
+        term_z = sum(Wz_m(:) .* dJz_m(:));
+
+        dphidp(p,m) = -2 * (term_x + term_y + term_z);
+    end
+end
 end
 %% Helper functions
 
@@ -2165,36 +4625,6 @@ for m = 1: numel(img.fwd_model.sensors)
     sensor_locations(m,:) = img.fwd_model.sensors(m).position;
 end
 
-end
-
-function x = sensor_locations_to_vector(sensor_locations)
-
-n_sensors = size(sensor_locations,1);
-
-x = zeros(n_sensors*3,1);
-
-for m = 1:n_sensors
-    for p = 1:3
-        id = m + (p-1)*n_sensors;
-        x(id) = sensor_locations(m,p);
-    end
-end
-
-end
-
-function sensor_locations = vector_to_sensor_locations(x)
-
-assert(mod(numel(x),3) == 0);
-
-n_sensors = numel(x)/3;
-
-sensor_locations = zeros(n_sensors,3);
-for m = 1:n_sensors
-    for p = 1:3
-        id = m + (p-1)*n_sensors;
-        sensor_locations(m,p) = x(id);
-    end
-end
 end
 
 function dJ = compute_dJ_ds_complex(img,A,sensor_locations_0,delta,dim,p)
@@ -2255,3 +4685,4 @@ for m = 1:numel(img.fwd_model.sensors)
     end
 end
 end
+
