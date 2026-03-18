@@ -52,8 +52,8 @@ model_parameters.material.name = 'sphere_anomaly';
 model_parameters.sensorRadius = 3.5*model_parameters.radius;
 
 
-% model_parameters.material.position = [0.5 0 model_parameters.height/2];
-model_parameters.material.position = [0 0 model_parameters.height/2];
+model_parameters.material.position = [0.5 0 model_parameters.height/2];
+% model_parameters.material.position = [0 0 model_parameters.height/2];
 % model_parameters.material.radius = model_parameters.material.radius/2;
 
 background_conductivity = 3.28e-1/sigma0;
@@ -200,20 +200,43 @@ hold off
 
 drawnow;
 
+%% Compute Jacobians
 
-%% Find optimal regularization parameter with GCV, and perform tsvd reconstruction
-lambda_vector = logspace(-17,3,30);
+imgh_r = mk_image_mdeit(fmdl_reconstruction,background_conductivity);
+A = @(sigma) M(imgh_r,sigma);
+J_mdeit = calc_jacobian_mdeit(imgh_r, imgh_r.elem_data,[],A,'mdeit3');
 
-options = struct('reconstruct',true);
+J_eit = calc_jacobian(imgh_r);
 
-[lambda_optimal_mdeit3,optimal_id_mdeit,V_mu_mdeit,dx_mdeit] = generalized_cross_validation(imdl_mdeit_3,[dBx_noisy;dBy_noisy;dBz_noisy],lambda_vector,'reconstruct',true);
+[U_mdeit,S_mdeit,V_mdeit] = svd(J_mdeit,'econ');
+[U_eit,S_eit,V_eit] = svd(J_eit,'econ');
+
+%% Find optimal regularization parameter with L-Curve, and perform tsvd reconstruction
+
+lambda_vector = logspace(-20,3,30);
+
+imgh_recon = mk_image_mdeit(fmdl_reconstruction,background_conductivity);
+
+[lambda_optimal_mdeit3,dx_mdeit] = l_curve_method_new(...
+    J_mdeit,[dBx_noisy;dBy_noisy;dBz_noisy],lambda_vector,U_mdeit,S_mdeit,V_mdeit);
+
 imdl_mdeit_3.hyperparameter = struct('value',lambda_optimal_mdeit3);
 
+[lambda_optimal_eit,dx_eit] = l_curve_method_new(...
+    J_eit,du_noisy,lambda_vector,U_eit,S_eit,V_eit);
 
-[lambda_optimal_eit,optimal_id_eit,V_mu_eit,dx_eit] = generalized_cross_validation(imdl_eit,du_noisy,lambda_vector,'reconstruct',true);
 % Since EIDORS uses hp^2*RtR, but the generalized_cross_validation function
 % uses hp*RtR, we have to correct for that.
 imdl_eit.hyperparameter = struct('value',sqrt(lambda_optimal_eit));
+
+%% Find optimal regularization parameter with GCV, and perform tsvd reconstruction
+
+% options = struct('reconstruct',true);
+% [lambda_optimal_mdeit3,optimal_id_mdeit,V_mu_mdeit,dx_mdeit] = generalized_cross_validation(imdl_mdeit_3,[dBx_noisy;dBy_noisy;dBz_noisy],lambda_vector,'reconstruct',true);
+% [lambda_optimal_eit,optimal_id_eit,V_mu_eit,dx_eit] = generalized_cross_validation(imdl_eit,du_noisy,lambda_vector,'reconstruct',true);
+
+% imdl_mdeit_3.hyperparameter = struct('value',lambda_optimal_mdeit3);
+% imdl_eit.hyperparameter = struct('value',sqrt(lambda_optimal_eit));
 
 %% Show results
 img_tsvd_eit =  mk_image(imdl_eit.fwd_model,imdl_eit.jacobian_bkgnd.value);
@@ -230,19 +253,6 @@ subplot(1,2,2)
 show_fem_transparent_edges(img_tsvd_eit);
 
 drawnow
-
-%% Perform reconstruction (DO THIS ANYWAY TO COMPUTE THE JACOBIANS. CHANGE LATER!!!)
-
-% Reconstruct (difference) for 1-MDEIT
-% Bh = [Bxh_signal;Byh_signal;Bzh_signal];
-% Bi_noisy = [Bxi_noisy;Byi_noisy;Bzi_noisy];
-
-imgh_r = mk_image_mdeit(fmdl_reconstruction,background_conductivity);
-A = @(sigma) M(imgh_r,sigma);
-J_mdeit = calc_jacobian_mdeit(imgh_r, imgh_r.elem_data,[],A,'mdeit3');
-
-J_eit = calc_jacobian(imgh_r);
-
 
 %% Try to reconstruct with both information
 fprintf('Attempting EIT+MDEIT reconstruction: \n');
@@ -347,83 +357,10 @@ fprintf('Took %i (s)\n',toc);
 % fprintf('Maximum curvature = %.4e\n', kappa_interp(imax));
 % fprintf('Optimal hyperparameter = %.4e\n', lambda_opt);
 
-
 %% L-curve method (for some reason, works better than GCV here)
+[lambda_opt,dx] = l_curve_method_new(A_aug,r_aug,lambda_vector,U,S,V);
 
-for i = 1:length(lambda_vector)
-    
-    lambda = lambda_vector(i);
-
-    sigma = diag(S);             % singular values
-    Uy = U' * r_aug;             % coordinates in U-basis
-    z = (sigma ./ (sigma.^2 + lambda)) .* Uy;  % correct if sigma and Uy are same length
-    d_sigma = V * z;
-
-    residual_norms(i) = norm(A_aug*d_sigma-r_aug,2); 
-    x_norms(i) = norm(d_sigma,2);
-end
-
-% Given data
-r = residual_norms(:);
-xnorm = x_norms(:);
-
-% Sort by residual norm (important for monotone x)
-[rs, idx] = sort(r);
-xs = xnorm(idx);
-
-% Log-log scale for L-curve
-lr = log(rs);
-lx = log(xs);
-
-lambda_vector_dense = logspace(log10(min(lambda_vector)), log10(max(lambda_vector)), 100);
-
-lx_dense = interp1(lambda_vector, lx, lambda_vector_dense, 'pchip');
-lr_dense = interp1(lambda_vector, lr, lambda_vector_dense, 'pchip');
-lx_dense = lx_dense(:);
-lr_dense = lr_dense(:);
-
-dx_dense = gradient(exp(lx_dense),lambda_vector_dense);
-r_dense = exp(lr_dense);
-x_dense = exp(lx_dense);
-
-kappa_dense = -2.*r_dense.*x_dense.*...
-    (lambda_vector_dense(:).^2.*x_dense+lambda_vector_dense(:).*r_dense+r_dense.*x_dense./(dx_dense))./...
-    (lambda_vector_dense(:).^2.*x_dense.^2+r_dense.^2).^(3/2);
-
-% Find maximum curvature (corner of L-curve)
-[~, imax] = max(kappa_dense);
-opt_r = r_dense(imax);
-opt_x = x_dense(imax);
-
-% Assuming lambda_vector corresponds to lr_dense
-lambda_opt = lambda_vector_dense(imax);
-
-fprintf('Optimal residual norm = %.4e\n', opt_r);
-fprintf('Optimal solution norm = %.4e\n', opt_x);
-fprintf('Maximum curvature = %.4e\n', kappa_dense(imax));
-fprintf('Optimal hyperparameter = %.4e\n', lambda_opt);
-
-
-%% figure
-figure
-hold on
-plot(rs,xs,'b.');
-plot(residual_norms,x_norms);
-plot(opt_r,opt_x,'r.','MarkerSize',10)
-text(opt_r+0.1,opt_x,strcat('$\lambda = ',num2str(lambda_opt),'$'),'Interpreter','latex')
-hold off
-grid on;grid minor;box on;
-set(gca,'YScale','log')
-set(gca,'XScale','log')
-
-drawnow
 %% Solve with TSVD
-lambda =  lambda_opt;
-
-sigma = diag(S);             % singular values
-Uy = U' * r_aug;             % coordinates in U-basis
-z = (sigma ./ (sigma.^2 + lambda)) .* Uy;  % correct if sigma and Uy are same length
-dx = V * z;
 
 img_combined = imgh_r;
 img_combined.elem_data = dx;
@@ -540,6 +477,7 @@ funct_eit_mdeit = @(imgh,imgi,num_noise_repetitions) noisy_data_generator_eit_md
 lambda_eit = imdl_eit.hyperparameter.value^2;
 lambda_mdeit =imdl_mdeit_3.hyperparameter.value;
 
+fprintf('Doing noise correction\n');
 sigma_std_eit = noise_correction(imgh,imgi,J_eit,lambda_eit,func_eit,15);
 sigma_std_mdeit = noise_correction(imgh,imgi,J_mdeit,lambda_mdeit,func_mdeit,15);
 sigma_std_eit_mdeit = noise_correction(imgh,imgi,A_aug,lambda_opt,funct_eit_mdeit,15,U,S,V);
@@ -583,41 +521,63 @@ img_mdeit_n.elem_data = img_mdeit_n.elem_data./sigma_std_mdeit;
 img_combined_n = img_combined;
 img_combined_n.elem_data = img_combined_n.elem_data./sigma_std_eit_mdeit;
 
-subplot(2,4,1)
-plot_image_slice(z_level,npoints,img_eit_n);
+
+
+subplot(3,4,1)
+show_fem_transparent_edges(img_tsvd_eit);
+view(0,0)
 box on;
 title('EIT','Interpreter','latex')
-subplot(2,4,2)
-plot_image_slice(z_level,npoints,img_mdeit_n);
+subplot(3,4,2)
+show_fem_transparent_edges(img_tsvd_mdeit);
+view(0,0)
 box on;
 title('MDEIT','Interpreter','latex')
-subplot(2,4,3)
-plot_image_slice(z_level,npoints,img_combined_n);
+subplot(3,4,3)
+show_fem_transparent_edges(img_combined);
+view(0,0)
 box on;
 title('MDEIT+EIT','Interpreter','latex')
-subplot(2,4,4)
-plot_image_slice(z_level,npoints,imgi);
+subplot(3,4,4)
+show_fem_transparent_edges(imgi);
+view(0,0)
 box on;
 title('Ground Truth','Interpreter','latex')
 
 
+subplot(3,4,5)
+plot_image_slice(z_level,npoints,img_eit_n);
+box on;
+title('EIT','Interpreter','latex')
+subplot(3,4,6)
+plot_image_slice(z_level,npoints,img_mdeit_n);
+box on;
+title('MDEIT','Interpreter','latex')
+subplot(3,4,7)
+plot_image_slice(z_level,npoints,img_combined_n);
+box on;
+title('MDEIT+EIT','Interpreter','latex')
+subplot(3,4,8)
+plot_image_slice(z_level,npoints,imgi);
+box on;
+title('Ground Truth','Interpreter','latex')
 
-subplot(2,4,5)
+subplot(3,4,9)
 show_fem_transparent_edges(img_eit_n);
 view(0,0)
 box on;
 title('EIT','Interpreter','latex')
-subplot(2,4,6)
+subplot(3,4,10)
 show_fem_transparent_edges(img_mdeit_n);
 view(0,0)
 box on;
 title('MDEIT','Interpreter','latex')
-subplot(2,4,7)
+subplot(3,4,11)
 show_fem_transparent_edges(img_combined_n);
 view(0,0)
 box on;
 title('MDEIT+EIT','Interpreter','latex')
-subplot(2,4,8)
+subplot(3,4,12)
 show_fem_transparent_edges(imgi);
 view(0,0)
 box on;
