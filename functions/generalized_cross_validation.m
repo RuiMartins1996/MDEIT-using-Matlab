@@ -227,10 +227,10 @@ end
 mu_min = m*lambda_vector(optimal_id);
 
 if opts.reconstruct == true
-    % lhs = J'*J+mu_min*speye(n_elems); rhs = -J'*data;
+    % lhs = J'*J+mu_min*speye(n_elems); rhs = J'*data;
     
     fprintf('Computing inverse solution for optimal reg. parameter \n');
-    dx = -V * ((sigma ./ (sigma.^2 + mu_min)) .* Uy);
+    dx = V * ((sigma ./ (sigma.^2 + mu_min)) .* Uy);
 
 else
     dx = []; % Explicitly set to empty
