@@ -12,17 +12,24 @@ clc;clear all;close all;
 %     106,61,154]/255;
 
 
-colors = [
-    228,26,28;
-    55,126,184;
-    77,175,74;
-    152,78,163;
-    255,127,0;
-    255,255,51;
-    166,86,40;
-    247,129,191;
-    153,153,153
-    ]/255;
+colors = [228,26,28;
+55,126,184;
+77,175,74;
+152,78,163;
+255,127,0;
+255,255,51;
+166,86,40;
+247,129,191]/255;
+
+% Convert the bright yellow to a more darker brightness
+c = [255 255 51] / 255;   % normalize
+hsv = rgb2hsv(c);
+
+hsv(3) = 0.7 * hsv(3);    % reduce brightness (Value)
+
+c_darker = round(hsv2rgb(hsv) * 255);
+
+colors(6,:) = c_darker/255;
 
 markers = {'x','d','o','s','*','+'};
 marker_size = 3;
@@ -108,7 +115,10 @@ max_num_measurements = -inf;
 
 number_of_elements = zeros(numel(data_vec),numel(data_vec{1}.num_of_elements));
 
+figure
 hold on
+set(gca, 'Color', [0.95 0.95 0.95])
+
 for i = 1:length(data_vec)
     number_of_elements(i,:) = data_vec{1}.num_of_elements;
 
@@ -122,66 +132,78 @@ for i = 1:length(data_vec)
     plot(num_measurements_sorted,condition_number_sorted,...
         'Marker',markers{i},'MarkerSize',marker_size,'Color',colors(i,:));
 end
+
 hold off
 grid on;grid minor;
-
+box on;
 set(gca,'YScale','log')
 set(gca,'XScale','log')
 
 xlim([min_num_measurements,max_num_measurements])
 
-legend(name_vec,'Interpreter','latex');
+legend(name_vec,'Interpreter','latex','Location','northwest');
 
-xlabel("$N_{meas}$",'Interpreter','latex')
+xlabel('Number of measurements','Interpreter','latex')
 ylabel("$\kappa$",'Interpreter','latex')
 
 %% Plot rank
-figure
 min_num_measurements = inf;
 max_num_measurements = -inf;
 
 
 show_ids = [1 4 5 6]; %skip showing data for mdeit-x and mdeit-y, since its the same as for mdeit-z
 
-all_num_measurements_sorted = ...
-    zeros(length(data_vec),numel(data_vec{1}.num_of_measurements));
+all_number_of_sensors_sorted = cell(length(data_vec),1);
+all_num_measurements_sorted = cell(length(data_vec),1);
+all_percentages = cell(length(data_vec),1);
 
-all_percentages = ...
-    zeros(length(data_vec),numel(data_vec{1}.num_of_measurements));
-all_ranks_sorted = ...
-    zeros(length(data_vec),numel(data_vec{1}.num_of_measurements));
+all_ranks_sorted = cell(length(data_vec),1);
 
 ids_valid = ...
     false(length(data_vec),numel(data_vec{1}.num_of_measurements)); %checks where rank is bigger than number of elements
 
-hold on
 for i = 1:length(data_vec)
-
-    min_num_measurements = min(min_num_measurements,min(data_vec{i}.num_of_measurements));
-    max_num_measurements = max(max_num_measurements,max(data_vec{i}.num_of_measurements));
     
-    [num_measurements_sorted,ids] = sort(data_vec{i}.num_of_measurements);
+    % Which entries are valid <=> the rank is smaller than the number of
+    % elements
+    ids_valid(i,:) = data_vec{i}.rank<data_vec{i}.num_of_elements;
     
-    all_num_measurements_sorted(i,:) = num_measurements_sorted;
-    all_ranks_sorted(i,:) = data_vec{i}.rank(ids);
+    min_num_measurements = min(...
+        min_num_measurements,...
+        min(data_vec{i}.num_of_measurements(ids_valid(i,:))));
+    max_num_measurements = max(...
+        max_num_measurements,...
+        max(data_vec{i}.num_of_measurements(ids_valid(i,:))));
+     
+    num_of_measurements_valid = data_vec{i}.num_of_measurements(ids_valid(i,:));
+    valid_ranks = data_vec{i}.rank(ids_valid(i,:));
     
-    ids_valid(i,:) = data_vec{i}.rank(ids)<data_vec{i}.num_of_elements(ids);
+    valid_num_of_sensors = data_vec{i}.num_of_sensors(ids_valid(i,:));
     
-    percentages = data_vec{i}.rank(ids)./(num_measurements_sorted)*100;
-    all_percentages(i,:) = percentages;
+    % Sort valid entries
+    [num_measurements_sorted,ids] = sort(num_of_measurements_valid);
+    
+    all_num_measurements_sorted{i} = num_measurements_sorted;
+    all_number_of_sensors_sorted{i} = valid_num_of_sensors(ids);
+    all_ranks_sorted{i} = valid_ranks(ids);
+    
+    percentages = valid_ranks(ids)./(num_measurements_sorted)*100;
+    all_percentages{i} = percentages;
 end
 
 
 figure
+set(gca, 'Color', [0.95 0.95 0.95])
+
 hold on
 x = linspace(...
-    min(all_num_measurements_sorted(:)),...
-    max(all_num_measurements_sorted(:)));
+    min(vertcat(all_num_measurements_sorted{:})),...
+    max(vertcat(all_num_measurements_sorted{:})));
 
 for i = show_ids
     ids = ids_valid(i,:);
     
-    plot(all_num_measurements_sorted(i,ids),all_ranks_sorted(i,ids),'Color',colors(i,:),'Marker',markers{i})
+    plot(all_num_measurements_sorted{i},all_ranks_sorted{i},'Color',colors(i,:),'Marker',markers{i})
 end
 
 
@@ -189,7 +211,7 @@ name_vec_m = name_vec;
 for i = show_ids
     ids = ids_valid(i,:);
 
-    poly{i} = polyfit(log10(all_num_measurements_sorted(i,ids)),log10(all_ranks_sorted(i,ids)),1);
+    poly{i} = polyfit(log10(all_num_measurements_sorted{i}),log10(all_ranks_sorted{i}),1);
     y = x.^(poly{i}(1))*10^(poly{i}(2));
     
     plot(x,y,'--','Color',colors(i,:))
@@ -217,15 +239,14 @@ box on;
 legend(name_vec_m{show_ids},'Interpreter','latex','Location','southeast')
 
 
-%%
-
+%% Plot of rank percentage w.r.t. number of measurements
 figure
-
+set(gca, 'Color', [0.95 0.95 0.95])
 hold on
 for i = show_ids
     ids = ids_valid(i,:);
     
-    plot(all_num_measurements_sorted(i,ids),all_ranks_sorted(i,ids)./all_num_measurements_sorted(i,ids)*100,...
+    plot(all_num_measurements_sorted{i},all_percentages{i},...
         'Color',colors(i,:),'Marker',markers{i},'LineWidth',1)
 end
 
@@ -239,3 +260,49 @@ box on;
 
 xlabel('Number of measurements','Interpreter','latex')
 ylabel('$\rho (\%)$','Interpreter','latex')
+
+%% Plot of rank w.r.t. number of electrodes
+
+figure
+set(gca, 'Color', [0.95 0.95 0.95])
+hold on
+for i = show_ids
+    ids = ids_valid(i,:);
+    
+    plot(all_number_of_sensors_sorted{i},all_ranks_sorted{i},...
+        'Color',colors(i,:),'Marker',markers{i},'LineWidth',1)
+end
+
+legend(name_vec_m{show_ids},'Interpreter','latex','Location','southeast')
+
+set(gca,'YScale','log')
+set(gca,'XScale','log')
+
+grid on;grid minor;
+box on;
+
+xlabel('Number of sensors/electrodes','Interpreter','latex')
+ylabel('Rank','Interpreter','latex')
+
+%% Plot of percentages w.r.t. number of electrodes
+
+figure
+set(gca, 'Color', [0.95 0.95 0.95])
+hold on
+for i = show_ids
+    ids = ids_valid(i,:);
+    
+    plot(all_number_of_sensors_sorted{i},all_percentages{i},...
+        'Color',colors(i,:),'Marker',markers{i},'LineWidth',1,'MarkerSize',2*(max(show_ids)-i+1))
+end
+
+legend(name_vec_m{show_ids},'Interpreter','latex','Location','southeast')
+
+ylim([0,100]);
+set(gca,'XScale','log')
+
+grid on;grid minor;
+box on;
+
+ylabel('$\rho (\%)$','Interpreter','latex')
+xlabel('Number of sensors/electrodes','Interpreter','latex')

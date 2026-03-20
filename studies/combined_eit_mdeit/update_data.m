@@ -1,6 +1,6 @@
 function data_updated = update_data(data_new,file_name)
 
-expected_fields = {'num_of_elements','num_of_measurements',...
+expected_fields = {'num_of_elements','num_of_sensors','num_of_measurements',...
     'rank','random_seed','sensor_radius','singular_values'};
     
     function data_old = parse_data(file_name)
@@ -50,9 +50,10 @@ if isfile(file_name)
     
     % Extract fields from new entries
     vals = cellfun(@(f) data_new.(f)(is_new), expected_fields, 'UniformOutput', false);
-    [new_elems, new_meas, new_rank,new_rcs, new_sr] = vals{:};
+    [new_elems, new_sensor_number,new_meas, new_rank,new_rcs, new_sr] = vals{:};
 
-    new_vals = {new_elems, new_meas,new_rank, new_rcs, new_sr};
+    new_vals = {new_elems,new_sensor_number,new_meas,new_rank, new_rcs, new_sr};
+    assert(numel(new_vals)==numel(field_names));
 
     for k = 1:numel(field_names)
         f = field_names{k};
