@@ -48,64 +48,7 @@ n_nodes = size(imgh.fwd_model.nodes,1);
 A = @(x) M(imgh,x);
 
 %% Initialize sensor locations
-
-dimension = size(imgh.fwd_model.nodes,2);
-
-switch dimension
-    case 2
-        fmdl_height = 0;
-    case 3
-        fmdl_height = max(imgh.fwd_model.nodes(:,3))-min(imgh.fwd_model.nodes(:,3));
-    otherwise
-        error('Unexpected')
-end
-
-fmdl_radius = max(sqrt(imgh.fwd_model.nodes(:,1).^2 + imgh.fwd_model.nodes(:,2).^2));
-
-dtheta0 = 2*pi/n_sensors;
-
-r0 = 1.5*fmdl_radius*ones(1,n_sensors);
-theta0 = linspace(0,2*pi-dtheta0,n_sensors);
-z0 = fmdl_height/2*ones(1,n_sensors);
-
-sensor_locations_0 = [(r0(:).*cos(theta0(:))),(r0(:).*sin(theta0(:))),z0(:)];
-
- 
-% For some reason, when the initial sensor position is a circle at half
-% height, the optimizaton does not make any iterations. When it is a ring
-% at height 1/10 of total height, it does ...? (fminunc stopped because it
-% cannot decrease the objective function along the current search
-% direction.)
-
-
-% Lets randomize the initial sensor position a bit, might be a local
-% minimum 
-% sensor_locations_0 = sensor_locations_0 + 0.1*2*(rand(size(sensor_locations_0))-1/2);
-
-%RESULT: A bit of randomizaton has the same problem
-
-% Lets try full randomization
-% rng(4)
-% r0 = 1.05*fmdl_radius + 0.5*fmdl_radius*rand(1,n_sensors);
-% z0 = 0 + fmdl_height*rand(1,n_sensors);
-% sensor_locations_0 = [(r0(:).*cos(theta0(:))),(r0(:).*sin(theta0(:))),z0(:)];
-
-%RESULT: The cost function is considerably smaller right at the 0th
-%iteration. It does not iterate even when I change then rng()
-
-% This problem happens on the test.m script as well, so its nothing
-% particular to this rewriting!!!!
-
-%% Need the inverse covariance matrices, or need linear system solution inside the solvers!
-
-%For now, just 
-%% Define the jacobian coordinate transformation (probably must be supplied by the user)
-
-% jac_coor_transf = @(x) x'*x;
-%% User sould also define a function that maps 3*n_sensors vector of cartesian coordinates of sensor positions to chosen generalized coordinates
-
-% q_to_x = @(q) q;
-% x_to_q = @(x) x;
+sensor_locations_0 = fetch_sensor_locations(imgh);
 
 %% Map from sensor locations to generalized coordinates and vice-versa
 
@@ -135,9 +78,9 @@ q0 = sensor_locations_to_vector_q(sensor_locations_0);
 
 func_grad = @(q) funcwithgrad(q,f_impl,g_impl);
 
-% Check if gradient is correct with finite differences ( checks out)
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% % Check if gradient is correct with finite differences ( checks out)
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % g_0 = g_impl(q0);
 % 
 % grad_fd = zeros(1,numel(q0));
@@ -157,8 +100,8 @@ func_grad = @(q) funcwithgrad(q,f_impl,g_impl);
 %     end
 % end
 % disp(grad_fd-g_0)
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 [q_opt,fval,history] = runfminunc(func_grad,q0,options);
 
@@ -2145,4 +2088,16 @@ for select_sensor_axis = 1:3
 end
 
 return
+end
+
+
+
+function sensor_locations = fetch_sensor_locations(img)
+n_sensors = numel(img.fwd_model.sensors);
+sensor_locations = zeros(n_sensors,3);
+
+for m = 1: numel(img.fwd_model.sensors)
+    sensor_locations(m,:) = img.fwd_model.sensors(m).position;
+end
+
 end
