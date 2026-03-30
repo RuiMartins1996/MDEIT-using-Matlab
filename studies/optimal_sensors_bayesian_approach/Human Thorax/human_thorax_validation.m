@@ -56,10 +56,12 @@ shape_library('show','adult_male');
 
 %% Problem parameters
 
+height = 0.25;
+
 anomaly = struct('position',[],'radius',[]);
 anomaly.position(1) = 0.1;
 anomaly.position(2) = 0.1;
-anomaly.position(3) = 0.5;
+anomaly.position(3) = height/2;
 anomaly.radius = 0.1;
 
 background_conductivity = 3.28e-1/sigma0;
@@ -71,38 +73,54 @@ current_amplitude = 2.4e-3/I0;
 
 mu0 = 1.0;
 
-num_sensors = 3;
+num_sensors = 2;
 R0 = 1.5;
 
 dtheta = 2*pi/num_sensors;
 theta0 = 0:dtheta:2*pi-dtheta;
-z0 = 0.5*ones(numel(theta0),1);
-sensor_locations_0 = [R0*cos(theta0(:)),R0*sin(theta0(:)),z0(:)];
+z0 = height/2*ones(numel(theta0),1);
+sensor_positions_0 = [R0*cos(theta0(:)),R0*sin(theta0(:)),z0(:)];
 
 
 % maxsz_mesh = 0.04;
 % maxsz_electrode = 0.01;
 
+maxsz_mesh = 5.0;
+maxsz_electrode = 5.0;
 
-maxsz_mesh = 0.32;
-maxsz_electrode = 0.08;
+num_of_electrodes_per_ring = 3;
 
-num_of_electrodes_per_ring = 16;
+rmin = 1.01;
+rmax = 2.0;
 
 %% Use Netgen to build a FEM model of the thorax with and without inclusion
 
+figure;
+
+% We need to make the model as coarse as we can because the sensor
+% configuration optimization algorithm is not yet optimized for fine meshes
+
+% Currently, best is 9k elements
+% Currently, best is 8k elements
+% Currently, best is 6k elements
+% Currently, best is 5699 elements
+% Currently, best is 4131 elements
+
+
+% What helps: big electrode radius; small height, but not too small so that the electrodes don't fit; small number of electrodes. 
+
 % Homogeneous model
 if ~exist(fullfile(script_folder,"\model\model_homogeneous.mat"),'file')
-    shape = { 1,                      % height
-        {thorax, rlung, llung}, % contours
-        [4,50],                 % perform smoothing with 50 points
-        maxsz_mesh};                  % small maxh (fine mesh)
+    shape = {height,                        % height
+        {thorax, rlung, llung},         % contours
+        1,                              % 1 - contour points are interpreted as vertices
+        maxsz_mesh};                    % small maxh (fine mesh)
 
     elec_pos = [num_of_electrodes_per_ring,                  % number of elecs per plane
         1,                   % equidistant spacing
-        0.5]';               % a single z-plane
-
-    elec_shape = [0.05,               % radius
+        height/2]';               % a single z-plane
+    
+    elec_shape = [0.1,               % radius 
         0,                  % circular electrode
         maxsz_electrode]';             % maxh (electrode refinement)
 
@@ -110,31 +128,39 @@ if ~exist(fullfile(script_folder,"\model\model_homogeneous.mat"),'file')
 
     % Complete models for MDEIT
     fmdl.mu0 = mu0;
-    fmdl = assign_magnetometers(fmdl,sensor_positions);
+    fmdl = assign_magnetometers(fmdl,sensor_positions_0);
     fmdl = compute_geometry_matrices(fmdl,mu0);
-
-
-    save(fullfile(script_folder,"\model\model_homogeneous"),"fmdl_hom");
+    %%
+    subplot(1,2,1)
+    show_fem_transparent_edges(fmdl);
+    drawnow;
+    %%
+    save(fullfile(script_folder,"\model\model_homogeneous"),"fmdl");
     var = load("Human Thorax\model\model_homogeneous.mat");
-    fmdl_hom = var.fmdl_hom;
+    fmdl_hom = var.fmdl;
 else
     var = load("Human Thorax\model\model_homogeneous.mat");
-    fmdl_hom = var.fmdl_hom;
+    fmdl_hom = var.fmdl;
+
+    subplot(1,2,1)
+    show_fem_transparent_edges(fmdl_hom);
+    drawnow;
 end
 
 if ~exist(fullfile(script_folder,"\model\model_inhomogeneous.mat"),'file')
-    shape = { 1,                      % height
-        {thorax, rlung, llung}, % contours
-        [4,50],                 % perform smoothing with 50 points
-        maxsz_mesh};                  % small maxh (fine mesh)
-
+    
+    shape = {height,                                        % height
+        {thorax, rlung, llung},                             % contours
+        1,                                                  % 1 - contour points are interpreted as vertices
+        maxsz_mesh};                                        % small maxh (fine mesh)
+    
     elec_pos = [num_of_electrodes_per_ring,                  % number of elecs per plane
-        1,                   % equidistant spacing
-        0.5]';               % a single z-plane
+        1,                                                   % equidistant spacing
+        height/2]';                                          % a single z-plane
 
-    elec_shape = [0.05,               % radius
-        0,                  % circular electrode
-        maxsz_electrode]';             % maxh (electrode refinement)
+    elec_shape = [0.1,                                      % radius
+        0,                                                  % circular electrode
+        maxsz_electrode]';                                  % maxh (electrode refinement)
 
     % Sphere in CSG
     string = sprintf('sphere(%.2f,%.2f,%.2f;%.2f)',...
@@ -153,28 +179,24 @@ if ~exist(fullfile(script_folder,"\model\model_inhomogeneous.mat"),'file')
 
     % Complete models for MDEIT
     fmdl.mu0 = mu0;
-    fmdl = assign_magnetometers(fmdl,sensor_positions);
+    fmdl = assign_magnetometers(fmdl,sensor_positions_0);
     fmdl = compute_geometry_matrices(fmdl,mu0);
 
+    subplot(1,2,2)
+    show_fem_transparent_edges(fmdl);
+    drawnow;
 
-    save(fullfile(script_folder,"\model\model_inhomogeneous"),"fmdl_inhom");
+    save(fullfile(script_folder,"\model\model_inhomogeneous"),"fmdl");
     var = load("Human Thorax\model\model_inhomogeneous.mat");
-    fmdl_inhom = var.fmdl_inhom;
+    fmdl_inhom = var.fmdl;
 else
     var = load("Human Thorax\model\model_inhomogeneous.mat");
-    fmdl_inhom = var.fmdl_inhom;
+    fmdl_inhom = var.fmdl;
+
+    subplot(1,2,2)
+    show_fem_transparent_edges(fmdl_inhom);
+    drawnow;
 end
-
-% %% Complete models for MDEIT
-% fmdl_hom.mu0 = mu0;
-% fmdl_inhom.mu0 = mu0;
-% 
-% fmdl_hom = assign_magnetometers(fmdl_hom,sensor_positions);
-% fmdl_inhom = assign_magnetometers(fmdl_inhom,sensor_positions);
-% 
-% fmdl_hom = compute_geometry_matrices(fmdl_hom,mu0);
-% fmdl_inhom = compute_geometry_matrices(fmdl_inhom,mu0);
-
 %% Assign stimulation pattern
 stimulation = mk_stim_patterns(num_of_electrodes_per_ring,1,inj,meas,{'meas_current'},current_amplitude);
 
@@ -223,7 +245,7 @@ inv_Gamma_noise = inv_Gamma_noise_3_axis;
 % paramter according to L-Curve method for the initial sensor configuration
 
 imgtemp = imgh;
-imgtemp = assign_sensor_locations(imgtemp,sensor_locations_0);
+imgtemp = assign_sensor_locations(imgtemp,sensor_positions_0);
 
 A = @(x) M(imgh,x);
 
@@ -244,45 +266,44 @@ variance_prior = variance_noise/lambda_opt;
 
 fprintf('Building smooth prior\n');
 
-% str = sprintf("(x-%2.2f).^2+(y-%2.2f).^2+(z-%2.2f).^2<%2.2f^2",...
-%     anomaly.position(1),anomaly.position(2),anomaly.position(3),anomaly.radius);
+
+lung_elem_ids = [imgh.fwd_model.mat_idx{2}(:);imgh.fwd_model.mat_idx{3}];
+lung_idx = false(size(imgh.fwd_model.elems,1),1);
+lung_idx(lung_elem_ids) = true;
+
+in_block = lung_idx*lung_idx.';
+
+bg_elem_ids = imgh.fwd_model.mat_idx{1}(:);
+bg_idx = false(size(imgh.fwd_model.elems,1),1);
+bg_idx(bg_elem_ids) = true;
+
+out_block = (bg_idx)*(bg_idx).';
+% out_block = (~lung_idx)*(~lung_idx).'; (same thing as above)
+
+
+%test
+elem_ids = [imgh.fwd_model.mat_idx{1}(:);imgh.fwd_model.mat_idx{2}(:);imgh.fwd_model.mat_idx{3}];
+
+% left_lung_elem_ids = imgh.fwd_model.mat_idx{2};
+% left_lung_idx = false(size(imgh.fwd_model.elems,1),1);
+% left_lung_idx(left_lung_elem_ids) = true;
 % 
-% select_fcn = inline(str,'x','y','z');
-% idx = elem_select(imgh.fwd_model, select_fcn);
-% idx(idx>0) = 1;
+% right_lung_elem_ids = imgh.fwd_model.mat_idx{3};
+% right_lung_idx = false(size(imgh.fwd_model.elems,1),1);
+% right_lung_idx(right_lung_elem_ids) = true;
 % 
-% in_block  = idx * idx.';  % both in
-% out_block = (~idx) * (~idx).';% both out
-
-% lung_elem_ids = [imgh.fwd_model.mat_idx{2}(:);imgh.fwd_model.mat_idx{3}];
-% lung_idx = false(size(imgh.fwd_model.elems,1),1);
-% lung_idx(lung_elem_ids) = true;
+% % Ensure disjointness (critical)
+% assert(all(ismember(right_lung_elem_ids,left_lung_elem_ids) == 0))
 % 
-% in_block = lung_idx*lung_idx.';
-% out_block = (~lung_idx)*(~lung_idx).';
-
-left_lung_elem_ids = imgh.fwd_model.mat_idx{2};
-left_lung_idx = false(size(imgh.fwd_model.elems,1),1);
-left_lung_idx(left_lung_elem_ids) = true;
-
-right_lung_elem_ids = imgh.fwd_model.mat_idx{3};
-right_lung_idx = false(size(imgh.fwd_model.elems,1),1);
-right_lung_idx(right_lung_elem_ids) = true;
-
-% Ensure disjointness (critical)
-assert(all(ismember(right_lung_elem_ids,left_lung_elem_ids) == 0))
-
-bg_idx = ~(left_lung_idx | right_lung_idx);
-
-
-
-in_block_llung = left_lung_idx*left_lung_idx.';
-in_block_rlung = right_lung_idx*right_lung_idx.';
-bg_block = bg_idx*bg_idx.';
-
+% bg_idx = ~(left_lung_idx | right_lung_idx);
+% 
+% in_block_llung = left_lung_idx*left_lung_idx.';
+% in_block_rlung = right_lung_idx*right_lung_idx.';
+% bg_block = bg_idx*bg_idx.';
 
 % Assemble kappa
-kappa = 0.8 * sparse(in_block_llung) + 0.4 * sparse(in_block_rlung) + 0.03 * sparse(bg_block);
+% kappa = 0.8 * sparse(in_block_llung) + 0.4 * sparse(in_block_rlung) + 0.03 * sparse(bg_block);
+kappa = 0.8 * sparse(in_block) + 0.03 * sparse(out_block);
 
 Gamma_smooth = smooth_prior(imgh,0.5,kappa);
 
@@ -317,44 +338,68 @@ function Gamma = smooth_prior(img, lambda, kappa)
     % 2) Build smoothness matrix
     % -------------------------------------------------------------
 
-    if issparse(kappa)
-        % Sparse-efficient version (recommended)
+    % Sparse-efficient version (recommended)
 
-        [i,j,val] = find(kappa);
+    [i,j,val] = find(kappa);
 
-        xi = centroids(i,:);
-        xj = centroids(j,:);
+    xi = centroids(i,:);
+    xj = centroids(j,:);
 
-        D2 = sum((xi - xj).^2, 2);
+    D2 = sum((xi - xj).^2, 2);
 
-        weights = val .* exp(-D2/(2*lambda^2));
+    weights = val .* exp(-D2/(2*lambda^2));
 
-        Gamma = sparse(i,j,weights,n_elem,n_elem);
+    Gamma = sparse(i,j,weights,n_elem,n_elem);
 
-    else
-        % Dense version (only for small problems)
+    %Symmetrize (since Gamma is supposed to be symmetric positive definite)
+    Gamma = 0.5*(Gamma+Gamma.');
 
-        x2 = sum(centroids.^2, 2);
-        D2 = bsxfun(@plus, x2, x2') - 2*(centroids*centroids');
-        D2 = max(D2,0);  % numerical safety
-
-        G = exp(-D2/(2*lambda^2));
-        Gamma = kappa .* G;
-    end
+    % Regularize to guarante positive defintness
+    Gamma = Gamma + 1e-6*speye(n_elem);
 end
 
-% Gamma_prior = variance_prior_3_axis*Gamma_smooth;
-% fprintf('\t Inverting smooth prior (might take a while)\n');
+fprintf('\t Inverting smooth prior (might take a while)\n');
 Gamma_prior = variance_prior*Gamma_smooth;
-% Gamma_prior = Gamma_prior + 1e-6 * speye(size(Gamma_prior)); %need regularization because of ill-conditioning
-% inv_Gamma_prior = Gamma_prior \ speye(size(Gamma_prior));
-% inv_Gamma_prior_3_axis = inv_Gamma_prior;
+Gamma_prior = Gamma_prior + 1e-6 * speye(size(Gamma_prior)); %need regularization because of ill-conditioning
+inv_Gamma_prior = Gamma_prior \ speye(size(Gamma_prior));
+inv_Gamma_prior_3_axis = inv_Gamma_prior;
+
 
 figure;
 img_prior = imgh;
 img_prior.elem_data = diag(Gamma_prior);
 show_fem_transparent_edges(img_prior);
+title('Smooth prior auto-correlation')
 drawnow;
+
+%% DEBUG
+
+% imgtemp = imgh;
+% imgtemp  = assign_sensor_locations(imgtemp ,sensor_positions_0);
+% 
+% % Gamma_prior is not PD. We can use a regularized version, maybe?
+% % Gamma_prior = Gamma_smooth + 1e-6 * speye(n_elem);
+% 
+% % Use a regularized version of Gamma_prior, best we can get to compute
+% % Cholesky
+% Gamma_prior = variance_prior*Gamma_smooth;
+% 
+% fprintf('Computing Cholesky factorization \n')
+% Ln = chol(Gamma_noise_3_axis, 'lower');
+% Lp = chol(Gamma_prior, 'lower');
+% fprintf('Done \n')
+% 
+% % These are giving the same results, which is a good sign. It's worth
+% % exploring using the Cholesky factorization of Gamma_prior to avoid
+% % computing the inverse, 
+% tic
+% c1 = compute_cost_function_a_opt_3_axis(imgtemp, sensor_positions_0,inv_Gamma_prior,inv_Gamma_noise_3_axis,A);
+% disp(toc);
+% 
+% tic
+% c3 = compute_cost_function_a_opt_3_axis_no_inverses_gpt(imgtemp, sensor_positions_0, Lp, Ln, A);
+% disp(toc)
+
 
 
 %% Define jacobian of coordinate transformations
@@ -448,14 +493,16 @@ q_to_x_xi = @(q) map_q_to_x_xi(q,rmin,rmax,theta0,z0);
 
 %% Define vector_to_sensor_locations and vice-versa
 
-x0 = sensor_locations_to_vector_cartesian(sensor_locations_0);
+x0 = sensor_locations_to_vector_cartesian(sensor_positions_0);
 
 % Full map from q coordinates to sensor locations and back for
 % unconstrained optimization
 vector_to_sensor_locations_xi = @(q) vector_to_sensor_locations_cartesian(q_to_x_xi(q));
 sensor_locations_to_vector_xi = @(sensor_locations) x_to_q_xi(sensor_locations_to_vector_cartesian(sensor_locations));
 
-assert(all(all(sensor_locations_0 == vector_to_sensor_locations_xi(sensor_locations_to_vector_xi(sensor_locations_0)))));
+assert(all(all(...
+    abs(sensor_positions_0 - vector_to_sensor_locations_xi(sensor_locations_to_vector_xi(sensor_positions_0)))<1e-9)...
+    ));
 %% Run optimization
 
 % Make sure your parallel pool is started
@@ -479,7 +526,7 @@ options = optimoptions('fminunc',...
 % Launch optimization from different initial conditions
 % Use a grid based multi-start
 
-num_of_sensors = size(z_0,1);
+num_of_sensors = size(z0,1);
 num_initial_conditions = 1;
 
 imgsh = cell(num_initial_conditions,1);
@@ -488,12 +535,12 @@ imgout = cell(num_initial_conditions,1);
 n = 1;
 for k = 1:num_initial_conditions
         
-        r_rand = rmin+(rmax-rmin)*rand(2,1);
+        r_rand = rmin+(rmax-rmin)*rand(num_of_sensors,1);
 
-        sensor_locations_0 = [(r_rand(:).*cos(theta_0(:))),(r_rand(:).*sin(theta_0(:))),z_0(:)];
+        sensor_positions_0 = [(r_rand(:).*cos(theta0(:))),(r_rand(:).*sin(theta0(:))),z0(:)];
 
-        imgsh{n} = imgh_recon;
-        imgsh{n} = assign_sensor_locations(imgsh{n},sensor_locations_0);
+        imgsh{n} = imgh;
+        imgsh{n} = assign_sensor_locations(imgsh{n},sensor_positions_0);
 
         img_out = optimize_sensor_configuration(imgsh{n},inv_Gamma_prior_3_axis,inv_Gamma_noise_3_axis,...
             jac_coord_transf_xi,q_to_x_xi,x_to_q_xi,'a-opt','mdeit3',3,options);
@@ -502,14 +549,275 @@ for k = 1:num_initial_conditions
         n=n+1;
 end
 
+
+%%
 figure
+
+subplot(1,num_initial_conditions+1,1)
+show_fem_transparent_edges(imgsh{1});
+plot_sensors(imgsh{1});
+view(0,90)
+axis([-rmax rmax -rmax rmax])
+box on
+title('Initial Condition for first model','Interpreter','latex')
+
 for n = 1:num_initial_conditions
-    subplot(1,num_initial_conditions,n)
+    subplot(1,num_initial_conditions+1,n+1)
     show_fem_transparent_edges(imgout{n});
     plot_sensors(imgout{n});
+    view(0,90)
+    axis([-rmax rmax -rmax rmax])
+    box on
+    title(sprintf('Opt config %i',n),'Interpreter','latex')
 end
 drawnow
 
+
+%% Optimize sensor positions with brute force
+function [sensor_locations_brute_force,min_cost,R1,R2,C] = ...
+    optimize_sensor_positions_brute_force(dq,imgh_recon,inv_Gamma_prior,inv_Gamma_noise,A,rmin,rmax,theta_0,z_0,N)
+
+num_of_sensors = numel(z_0);
+
+r = linspace(rmin,rmax,N);
+
+index_combinations = nchoosek(1:N, num_of_sensors);
+% Add pairs of (r1,r2) where r1 = r2;
+index_combinations = [index_combinations; [(1:N).',(1:N).']];
+
+num_of_combinations = size(index_combinations,1);
+
+cost  = zeros(num_of_combinations,1);
+
+afterEach(dq, @(~) updateProgress(num_of_combinations));
+
+% Function that each worker uses to output progress
+    function updateProgress(num_of_combinations, reset)
+        persistent completed t_global
+        if nargin > 1 && reset
+            completed = 0;
+            t_global = tic;
+            return
+        end
+
+        if isempty(completed)
+            completed = 0;
+            t_global = tic;
+        end
+
+        completed = completed + 1;
+        elapsed = toc(t_global);
+
+        avg_time_per_worker = elapsed / completed;
+
+        eta = avg_time_per_worker * (num_of_combinations - completed);
+        fprintf('ETA (s): %d\n', ceil(eta));
+    end
+
+updateProgress(0, true);
+
+%% Loop through all the sensor positions and compute cost
+parfor k = 1:num_of_combinations
+    
+    sensor_locations_brute_force = zeros(num_of_sensors,3);
+    for m = 1:num_of_sensors
+        rm = r(index_combinations(k,m));
+        sensor_locations_brute_force(m,:) = [rm.*cos(theta_0(m)),rm.*sin(theta_0(m)),z_0(m)];
+    end
+
+    cost(k) = ...
+        compute_cost_function_a_opt_3_axis(imgh_recon,sensor_locations_brute_force,inv_Gamma_prior,inv_Gamma_noise,A);
+
+    send(dq, k);
+end
+
+fprintf('Done\n');
+
+%% Find minimal cost 
+
+
+%% DEBUG ( mesh the cost function w.r.t. theta1, theta2)
+
+[R1,R2] = meshgrid(r,r);
+C = zeros(size(R1));
+
+for i = 1:size(index_combinations,1)
+    ids = index_combinations(i,:);
+    
+    % Symmetry of changing sensor 1 with sensor 2
+    C(ids(1),ids(2)) = cost(i);
+    C(ids(2),ids(1)) = cost(i);
+end
+
+
+%%
+
+[min_cost, linear_idx] = min(cost(:));  % minimum value and its linear index
+
+r_min = zeros(num_of_sensors,1);
+
+for m = 1:num_of_sensors
+    r_min(m) = r(index_combinations(linear_idx,m));
+end
+
+fprintf('Minimal cost: %2.2f\n', min_cost);
+fprintf('Radius: \n \t t1=%.4f\n', r_min);
+
+sensor_locations_brute_force = zeros(num_of_sensors,3);
+for m = 1:num_of_sensors
+    rm = r_min(m);
+    sensor_locations_brute_force(m,:) = [rm.*cos(theta_0(m)),rm.*sin(theta_0(m)),z_0(m)];
+end
+
+end
+
+%% Do brute force for several values of N
+
+% --- Load existing results if available ---
+if isfile('data/sensor_optimization_results.mat')
+    load('data/sensor_optimization_results.mat','resultsTable');
+else
+    resultsTable = table([], [], [], 'VariableNames', {'N','SensorLocations','MinCost'});
+end
+
+N_vec = [20];
+
+sensor_locations_brute_force = cell(1,numel(N_vec));
+min_cost = zeros(1,numel(N_vec));
+
+for n = 1:numel(N_vec)
+    N = N_vec(n);
+
+    % Check if N is already in the saved table
+    if any(resultsTable.N == N)
+        fprintf('Skipping N=%d, already computed.\n', N);
+        idx = find(resultsTable.N == N, 1);
+        sensor_locations_brute_force{n} = resultsTable.SensorLocations{idx};
+        min_cost(n) = resultsTable.MinCost(idx);
+        % continue
+    end
+
+    dq = parallel.pool.DataQueue;
+    
+    [sensor_locations_brute_force{n},min_cost(n),R1,R2,C] = ...
+        optimize_sensor_positions_brute_force(dq,imgh,inv_Gamma_prior,inv_Gamma_noise,A,rmin,rmax,theta0,z0,N);
+    
+    %% DEBUG
+
+    figure
+    hold on
+    % surf(R1,R2,C);
+    contour(R1,R2,C,20,'ShowText','on',"LabelFormat","%0.1f",'LineWidth',2);
+    shading interp
+    colormap hot
+    box on;
+    grid on;
+
+    xlabel('$r_1$','Interpreter','latex')
+    ylabel('$r_2$','Interpreter','latex')
+    zlabel('$C(r_1,r_2)$','Interpreter','latex')
+
+    % Get all local minima
+    Cmin = imregionalmin(C);
+
+    % Get indices of minima
+    [row, col] = find(Cmin);
+
+    % Map to actual coordinates
+    r1_min = R1(sub2ind(size(R1), row, col));
+    r2_min = R2(sub2ind(size(R2), row, col));
+    C_values   = C(sub2ind(size(C), row, col));
+
+    % % Local minima
+    % for i = 1:numel(r1_min)
+    %     plot3(r1_min(i),r2_min(i),C_values(i),'r.','MarkerSize',5)
+    % end
+
+    % Global minimum
+    ids = find(C_values == min(C_values));
+    plot3(r1_min(ids),r2_min(ids),C_values(ids),'ko','MarkerSize',10)
+    
+    min_cost_sopt = inf;
+    min_cost_id = inf;
+
+    for id = 1:num_initial_conditions
+        s0 = fetch_sensor_locations(imgsh{id});
+        % cost_s0 = ...
+        %     compute_cost_function_d_opt_3_axis(imgsh{id},fetch_sensor_locations(imgsh{id}),inv_Gamma_prior,inv_Gamma_noise,A);
+        % 
+        cost_s0 = ...
+            compute_cost_function_a_opt_3_axis(imgsh{id},fetch_sensor_locations(imgsh{id}),inv_Gamma_prior,inv_Gamma_noise,A);
+        
+        r0 = sqrt(s0(:,1).^2+s0(:,2).^2);
+        plot3(r0(1),r0(2),cost_s0,'bx','MarkerSize',10)
+
+        sopt = fetch_sensor_locations(imgout{id});
+        % cost_sopt = ...
+        %     compute_cost_function_d_opt_3_axis(imgout{id},sopt,inv_Gamma_prior,inv_Gamma_noise,A);
+
+        cost_sopt = ...
+            compute_cost_function_a_opt_3_axis(imgout{id},sopt,inv_Gamma_prior,inv_Gamma_noise,A);
+        
+        if cost_sopt<min_cost_sopt
+            min_cost_id = id;
+            min_cost_sopt = cost_sopt;
+        end
+
+        r_opt = sqrt(sopt(:,2).^2+sopt(:,1).^2);
+        
+        plot3(r_opt(1),r_opt(2),cost_sopt,'b.','MarkerSize',15)
+    end
+    
+    % r_bf = sqrt(...
+    %     sensor_locations_brute_force{n}(:,2).^2+...
+    %     sensor_locations_brute_force{n}(:,1).^2);
+    % 
+    % plot3(r_bf(1),r_bf(2),min_cost(n),'rh','MarkerSize',10)
+
+    axis([rmin,rmax,rmin,rmax])
+    
+    legend('Cost function','Global Minimum - Brute Force','Initial configuration','Opt Config - BFGS','Location','southeast')
+    hold off
+
+    %% --- Append new result to the table ---
+    newRow = {N, sensor_locations_brute_force{n}, min_cost(n)};
+    resultsTable = [resultsTable; newRow];
+    save('data/sensor_optimization_results.mat', 'resultsTable');
+end
+
+%% Plots
+
+figure
+
+sensor_position_init = zeros(num_of_sensors,3);
+sensor_position_bfgs =  zeros(num_of_sensors,3);
+
+for n = 1:num_of_sensors
+    sensor_position_init(n,:) = imgsh{1}.fwd_model.sensors(n).position;
+    sensor_position_bfgs(n,:) = imgout{1}.fwd_model.sensors(n).position;
+end
+sensor_position_bf = sensor_locations_brute_force{1};
+
+
+hold on;
+plot3(sensor_position_init(:,1),sensor_position_init(:,2),sensor_position_init(:,3),'r.');
+plot3(sensor_position_bfgs(:,1),sensor_position_bfgs(:,2),sensor_position_bfgs(:,3),'b.');
+plot3(sensor_position_bf(:,1),sensor_position_bf(:,2),sensor_position_bf(:,3),'ko');
+show_fem_transparent_edges(imgsh{1});
+
+
+view(0,90)
+axis([-rmax rmax -rmax rmax])
+grid on; grid minor;
+xlabel('x','Interpreter','latex');ylabel('y','Interpreter','latex')
+axis([-rmax rmax -rmax/2 rmax/2])
+box on
+legend({'Initial Condition','Optimal configuration BFGS','Brute force global minimum'},'Interpreter','latex','Location','northwest')
+
+
+
+
+drawnow
 
 
 
@@ -950,3 +1258,88 @@ end
 fmdl.sensors = sensors;
 
 end
+
+
+
+%DEBUG
+
+function cost = compute_cost_function_a_opt_3_axis(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A)
+
+n_elem = size(img.fwd_model.elems,1);
+
+% Assign sensor locations
+img = assign_sensor_locations(img,sensor_locations);
+
+% Compute the jacobian at current sensor locations
+[Jx, Jy, Jz] = calc_jacobian_3axis_direct_fully_vectorized_local_optimized(img, A);
+J = [Jx; Jy; Jz];
+
+% Define the inverse posterior covariance matrix
+H = J.'*inv_Gamma_noise*J+inv_Gamma_prior;
+
+% CHANGED HERE!
+% cost = trace(inv(H));
+
+L = chol(H,'lower');
+Hinv = L'\(L\eye(n_elem));
+cost = trace(Hinv);
+
+end
+
+
+function cost = compute_cost_function_a_opt_3_axis_no_inverses_gpt( ...
+    img, sensor_locations, Lp, Ln, A)
+
+n_elem = size(img.fwd_model.elems,1);
+
+% Assign sensor locations
+img = assign_sensor_locations(img, sensor_locations);
+
+% Compute Jacobian
+[Jx, Jy, Jz] = calc_jacobian_3axis_direct_fully_vectorized_local_optimized(img, A);
+J = [Jx; Jy; Jz];
+
+% Whiten J (no inverse formed)
+Jw   = Ln \ J;        % solves Ln * Jw = J
+Jhat = Jw * Lp;       % consistent with Lp Lp' = Gamma_prior
+
+% Build and factor Hhat
+Hhat = Jhat' * Jhat + speye(n_elem);
+Lh   = chol(Hhat, 'lower');
+
+% Compute trace(H^{-1})
+Z = Lh \ Lp';         % solves Lh * Z = Lp'
+cost = sum(Z(:).^2); % Frobenius norm squared
+
+end
+
+
+function cost =  compute_cost_function_a_opt_3_axis_no_inverses_no_cholesky(...
+    img, sensor_locations, Gamma_prior, Gamma_noise, A)
+
+n_elem = size(img.fwd_model.elems,1);
+
+% Assign sensor locations
+img = assign_sensor_locations(img, sensor_locations);
+
+% Compute Jacobian
+[Jx, Jy, Jz] = calc_jacobian_3axis_direct_fully_vectorized_local_optimized(img, A);
+J = [Jx; Jy; Jz];
+
+% Precompute
+GJ = J * Gamma_prior;
+M  = GJ * J' + Gamma_noise;
+
+% trace term 1
+t1 = trace(Gamma_prior);
+
+% Solve M X = J*Gamma_prior 
+X = M \ (J*Gamma_prior);
+
+t2 = trace(Gamma_prior*J.'*X);
+
+cost = t1-t2;
+
+end
+
+
