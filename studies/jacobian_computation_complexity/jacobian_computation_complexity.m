@@ -33,8 +33,8 @@ sigma0 = l0/z0; %(S/m)
 J0 = I0/(l0^2);
 %% Assign the parameters for several models (should create utility functions for this)
 
-num_of_repetitions_eit = 15;
-num_of_repetitions_mdeit = 5;
+num_of_repetitions_eit = 5;
+num_of_repetitions_mdeit = 3;
 
 maxsz_reconstruction = 0.03;
 
@@ -55,8 +55,8 @@ inj = [0 3]; %skip 2 pattern (pg 172)
 meas = [0 3]; %for EIT, skip2 measurement protocol was used
 options = {};
 
-% min_maxsz = model_parameters.radius;
-% max_maxsz = model_parameters.radius/10;
+min_maxsz = model_parameters.radius;
+max_maxsz = model_parameters.radius/10;
 % 
 % min_maxsz = model_parameters.radius/10;
 % max_maxsz = model_parameters.radius/15;
@@ -67,8 +67,9 @@ options = {};
 % min_maxsz = model_parameters.radius/20;
 % max_maxsz = model_parameters.radius/25;
 
-min_maxsz = model_parameters.radius/25;
-max_maxsz = model_parameters.radius/30;
+% min_maxsz = model_parameters.radius/25;
+% max_maxsz = model_parameters.radius/30;
+
 
 n_steps = 5;
 
@@ -87,6 +88,17 @@ for n = 1:numel(model_parameters_array)
     [model_parameters,fmdls] = ...
         mk_mdeit_model(model_parameters,model_folder,options);
     fmdls_all{n} = fmdls{1};
+end
+
+%% A small plot
+
+figure('Position',[100,100,1000,300])
+for n = 1:5
+    subplot(1,5,n)
+    mdl = fmdls_all{n};
+    show_fem_transparent_edges(mdl);
+    plot_sensors(mdl)
+    box on;
 end
 
 %% 
@@ -382,3 +394,17 @@ out = Ac-Ae*inv(Ad)*Ae';
 end
 
 
+
+
+function show_fem_transparent_edges(img)
+
+hh = show_fem(img);                % draw the model (hh may be a handle or array)
+% find the patch objects that actually draw the elements and remove their edges
+patches = findobj(hh, 'Type', 'Patch');
+if isempty(patches)
+    % sometimes hh is an axes handle or figure; search the axes too:
+    patches = findobj(gca, 'Type', 'Patch');
+end
+set(patches, 'EdgeAlpha', 0.1);
+
+end

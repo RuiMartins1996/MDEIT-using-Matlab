@@ -63,6 +63,7 @@ cla;
 
 fit_data_points_mdeit = 10:length(n_elems);
 fit_data_points_eit = 10:length(n_elems)-5;
+fit_data_points_eit_2 = length(n_elems)-6+1:length(n_elems);
 
 hold on
 errorbar(n_elems,times_eit,std_eit,'o','MarkerSize',5,'Color',colors(3,:))
@@ -79,16 +80,23 @@ p_eit = polyfit(...
     log10(times_eit(fit_data_points_eit)),...
     1);
 
+p_eit_2 = polyfit(...
+    log10(n_elems(fit_data_points_eit_2)),...
+    log10(times_eit(fit_data_points_eit_2)),...
+    1);
+
 % We're checking a fit of the type t = 10^(b)*K^m
 
 hold on
 x_mdeit = linspace(min(n_elems(fit_data_points_mdeit)),max(n_elems(fit_data_points_mdeit)));
 x_eit = linspace(min(n_elems(fit_data_points_eit)),max(n_elems(fit_data_points_eit)));
 
+x_eit_2 = linspace(min(n_elems(fit_data_points_eit_2)),max(n_elems(fit_data_points_eit_2)));
 
 % plot(x,10^p_eit(2)*x.^p_eit(1),'LineStyle','--','Color',colors(2,:))
 plot(x_mdeit,10^p_mdeit(2)*x_mdeit.^p_mdeit(1),'LineStyle','--','Color',colors(4,:))
 plot(x_eit,10^p_eit(2)*x_eit.^p_eit(1),'LineStyle','--','Color',colors(4,:))
+plot(x_eit_2,10^p_eit_2(2)*x_eit_2.^p_eit_2(1),'LineStyle','--','Color',colors(7,:))
 
 
 time_to_compute = 3600;
@@ -97,7 +105,7 @@ number_of_elements_for_time_to_compute = 10^((log10(time_to_compute) - p_mdeit(2
 hold off
 
 % msg1 = strcat('EIT $(m = ',num2str(p_eit(1)),'$)'); 
-msg1 = strcat('EIT $(t \sim K^{',num2str(p_eit(1),2),'}$)'); 
+msg1 = strcat('EIT $(t \sim K^{',num2str(p_eit(1),2),'}$)','$ | (t \sim K^{',num2str(p_eit_2(1),2),'}$)'); 
 msg2 = strcat('MDEIT $(t \sim K^{',num2str(p_mdeit(1),2),'}$)'); 
 
 legend({msg1,msg2},'Interpreter','latex','Location','northwest')

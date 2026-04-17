@@ -64,7 +64,7 @@ background_conductivity = 3.28e-1/sigma0;  %page 163 mentions a saline solution 
 % num_of_rings_array = 1:6;
 
 num_of_electrodes_per_ring_array = [4:16]; 
-num_of_rings_array = 1:6;
+num_of_rings_array = 1:8;
 
 % num_of_electrodes_per_ring_array = [4]; 
 % num_of_rings_array = [1,2,3,4];
@@ -75,15 +75,13 @@ num_of_sensors = combinations(1,:).*combinations(2,:);
 combinations = [combinations;num_of_sensors];
 
 % for some reason, the following combinations make netgen stuck, so avoid them 
-% [15,3,45]
-% [13,5,65]
+% [16,8,128]
 
 
-% remove ={...
-%     [15,3,45],...
-%     [13,5,65]};
+remove ={...
+    [16,8,128]};
 
-remove = {};
+% remove = {};
 
 for n = 1:numel(remove)
     id = find(all(ismember(combinations,remove{n}'),1));
@@ -102,11 +100,22 @@ fmdls_all = cell(1,numel(model_parameters_array));
 
 for n = 1:numel(model_parameters_array)
     model_parameters = model_parameters_array(n);
+    fprintf('Working on model : [%i,%i,%i]\n',model_parameters.numOfElectrodesPerRing,model_parameters.numOfRings,model_parameters.numOfSensors);
     [model_parameters,fmdls] = ...
         mk_mdeit_model(model_parameters,model_folder,options);
     fmdls_all{n} = fmdls{1};
 end
 
+%% A small plot
+
+figure('Position',[100,100,1000,300])
+for n = 1:5
+    subplot(1,5,n)
+    mdl = fmdls_all{8*n};
+    show_fem_transparent_edges(mdl);
+    plot_sensors(mdl)
+    box on;
+end
 %% 
 
 times_eit = zeros(numel(model_parameters_array),1);
@@ -423,3 +432,17 @@ Ad = s_mat.E(numNodes+1:end,numNodes+1:end);
 out = Ac-Ae*inv(Ad)*Ae';
 end
 
+
+
+function show_fem_transparent_edges(img)
+
+hh = show_fem(img);                % draw the model (hh may be a handle or array)
+% find the patch objects that actually draw the elements and remove their edges
+patches = findobj(hh, 'Type', 'Patch');
+if isempty(patches)
+    % sometimes hh is an axes handle or figure; search the axes too:
+    patches = findobj(gca, 'Type', 'Patch');
+end
+set(patches, 'EdgeAlpha', 0.1);
+
+end
