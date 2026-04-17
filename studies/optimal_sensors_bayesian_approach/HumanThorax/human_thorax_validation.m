@@ -197,6 +197,8 @@ else
     show_fem_transparent_edges(fmdl_inhom);
     drawnow;
 end
+
+
 %% Assign stimulation pattern
 stimulation = mk_stim_patterns(num_of_electrodes_per_ring,1,inj,meas,{'meas_current'},current_amplitude);
 
@@ -210,6 +212,7 @@ imgh = add_material_properties(imgh, [1,0.3,0.3]);
 
 imgi = mk_image_mdeit(fmdl_inhom,1.0);
 imgi = add_material_properties(imgi, [1 1.5 0.3 0.3]); %background, anomaly, right lung, left lung
+
 
 %% For visualization
 figure
@@ -1258,6 +1261,7 @@ end
 fmdl.sensors = sensors;
 
 end
+
 
 
 

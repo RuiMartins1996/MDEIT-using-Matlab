@@ -285,8 +285,6 @@ img_prior.elem_data = diag(Gamma_prior);
 show_fem_transparent_edges(img_prior);
 drawnow;
 
-
-
 %% Define jacobian of coordinate transformations
 
 function jacobian_coordinate_transformation = compute_jacobian_coordinate_transformation_xi(sensor_locations,rmin,rmax)
@@ -407,6 +405,27 @@ num_initial_conditions = 1;
 imgsh = cell(num_initial_conditions,1);
 imgout = cell(num_initial_conditions,1);
 
+
+%% DEBUG
+r_rand = rmin+(rmax-rmin)*rand(2,1);
+sensor_locations_0 = [(r_rand(:).*cos(theta_0(:))),(r_rand(:).*sin(theta_0(:))),z_0(:)];
+
+imgtemp = imgh_recon;
+imgtemp  = assign_sensor_locations(imgtemp ,sensor_locations_0);
+
+Ln = chol(Gamma_noise_3_axis, 'lower');
+Lp = chol(Gamma_prior, 'lower');
+
+c0 = compute_cost_function_a_opt_3_axis(imgtemp,sensor_locations_0,inv_Gamma_prior,inv_Gamma_noise_3_axis,A);
+
+c1 =  compute_cost_function_a_opt_3_axis_chol(imgtemp ,sensor_locations_0,inv_Gamma_prior,inv_Gamma_noise_3_axis,A);
+
+c2 = compute_cost_function_a_opt_3_axis_no_inverses_gpt(imgtemp, sensor_locations_0, Lp, Ln, A);
+
+c3 =  compute_cost_function_a_opt_3_axis_no_inverses_no_cholesky(...
+    imgtemp, sensor_locations_0, Gamma_prior, Gamma_noise_3_axis, A);
+
+%%
 n = 1;
 for k = 1:num_initial_conditions
         
@@ -1545,3 +1564,83 @@ hh.Annotation.LegendInformation.IconDisplayStyle = 'off';
 hh.HandleVisibility = 'off';
 
 end
+
+function cost = compute_cost_function_a_opt_3_axis_chol(img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A)
+
+n_elem = size(img.fwd_model.elems,1);
+
+% Assign sensor locations
+img = assign_sensor_locations(img,sensor_locations);
+
+% Compute the jacobian at current sensor locations
+[Jx,Jy,Jz]= calc_jacobian_3axis_direct_fully_vectorized_local_optimized(img,A);
+J = [Jx;Jy;Jz];
+
+% Define the inverse posterior covariance matrix
+H = J.'*inv_Gamma_noise*J+inv_Gamma_prior;
+
+% CHANGED HERE!
+% cost = trace(inv(H));
+
+L = chol(H,'lower');
+Hinv = L'\(L\eye(n_elem));
+cost = trace(Hinv);
+
+end
+
+
+function cost = compute_cost_function_a_opt_3_axis_no_inverses_gpt( ...
+    img, sensor_locations, Lp, Ln, A)
+
+n_elem = size(img.fwd_model.elems,1);
+
+% Assign sensor locations
+img = assign_sensor_locations(img, sensor_locations);
+
+% Compute Jacobian
+[Jx, Jy, Jz] = calc_jacobian_3axis_direct_fully_vectorized_local_optimized(img, A);
+J = [Jx; Jy; Jz];
+
+% Whiten J (no inverse formed)
+Jw   = Ln \ J;        % solves Ln * Jw = J
+Jhat = Jw * Lp;       % consistent with Lp Lp' = Gamma_prior
+
+% Build and factor Hhat
+Hhat = Jhat' * Jhat + speye(n_elem);
+Lh   = chol(Hhat, 'lower');
+
+% Compute trace(H^{-1})
+Z = Lh \ Lp';         % solves Lh * Z = Lp'
+cost = sum(Z(:).^2); % Frobenius norm squared
+
+end
+
+
+function cost =  compute_cost_function_a_opt_3_axis_no_inverses_no_cholesky(...
+    img, sensor_locations, Gamma_prior, Gamma_noise, A)
+
+n_elem = size(img.fwd_model.elems,1);
+
+% Assign sensor locations
+img = assign_sensor_locations(img, sensor_locations);
+
+% Compute Jacobian
+[Jx, Jy, Jz] = calc_jacobian_3axis_direct_fully_vectorized_local_optimized(img, A);
+J = [Jx; Jy; Jz];
+
+% Precompute
+GJ = J * Gamma_prior;
+M  = GJ * J' + Gamma_noise;
+
+% trace term 1
+t1 = trace(Gamma_prior);
+
+% Solve M X = J*Gamma_prior 
+X = M \ (J*Gamma_prior);
+
+t2 = trace(Gamma_prior*J.'*X);
+
+cost = t1-t2;
+
+end
+
