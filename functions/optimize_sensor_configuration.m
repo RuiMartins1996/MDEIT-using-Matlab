@@ -261,6 +261,13 @@ switch mode
             case 'a-opt'
                 dphidp = compute_cost_function_gradient_a_opt_optimized_3_axis(...
                     img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A);
+                % disp(toc);
+                % Gamma_prior = inv(inv_Gamma_prior);
+                % Gamma_noise = inv(Gamma_noise_3_axis);
+                % tic
+                % dphidp_2 = ...
+                %     compute_cost_function_a_opt_3_axis_alternative(img,sensor_locations,Gamma_prior,Gamma_noise,A);
+                % disp(toc)
             case 'd-opt'
                 dphidp = compute_cost_function_gradient_d_opt_optimized_3_axis(...
                     img,sensor_locations,inv_Gamma_prior,inv_Gamma_noise,A);
@@ -401,7 +408,31 @@ H = J.'*inv_Gamma_noise*J+inv_Gamma_prior;
 L = chol(H,'lower');
 Hinv = L'\(L\eye(n_elem));
 cost = trace(Hinv);
+end
 
+
+function cost = compute_cost_function_a_opt_3_axis_alternative(img,sensor_locations,Gamma_prior,Gamma_noise,A)
+
+% Assign sensor locations
+img = assign_sensor_locations(img,sensor_locations);
+
+% Compute the jacobian at current sensor locations
+J = calc_jacobian_mdeit_local(img,A,'mdeit3');
+
+% Define the inverse posterior covariance matrix
+S = J*Gamma_prior*J.'+Gamma_noise;
+
+% Step 2: factorize small system
+L = chol(S,'lower');
+
+% Step 3: compute middle term
+M = J * (Gamma_p^2) * J';   % careful: optimize this if diagonal
+
+% Step 4: solve
+X = L' \ (L \ M);
+
+% Step 5: trace
+cost = trace(Gamma_p) - trace(X);
 end
 
 %% FUNCTIONS: compute_cost_function_gradient_d_opt_optimized,compute_cost_function_gradient_a_opt_optimized,compute_cost_function_gradient_a_opt_optimized_3_axis,compute_cost_function_gradient_d_opt_optimized_3_axis
