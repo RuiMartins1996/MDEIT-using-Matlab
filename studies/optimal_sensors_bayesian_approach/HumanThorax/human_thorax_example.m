@@ -32,6 +32,10 @@ colors = [228,26,28;
 247,129,191]/255;
 
 markers = {'+','o','d','s','p','x','^' , '>' , '<' };
+
+opt_mode = 'd-opt';
+
+assert(ismember(opt_mode,{'d-opt','a-opt'}));
 %% Model parameters 
 z_0 = 0.0058; %(Ohm m^2) is the contact impedance from the CEM article 58 Ohm cm^2
 l0 = 40e-3; %(m) the tank radius
@@ -56,7 +60,7 @@ shape_library('show','adult_male');
 
 %% Problem parameters
 
-height = 0.25;
+height = 0.5;
 
 anomaly = struct('position',[],'radius',[]);
 anomaly.position(1) = 0.1;
@@ -91,10 +95,10 @@ sensor_positions_0 = [R0*cos(theta0(:)),R0*sin(theta0(:)),z0(:)];
 % and for reconstruction
 
 % Coarse
-maxsz_mesh = 0.1;
-maxsz_electrode = 0.05;
+maxsz_mesh = 1;
+maxsz_electrode = 0.15;
 num_of_electrodes_per_ring = 12;
-electrode_radius = 0.05;
+electrode_radius = 0.15;
 
 % % Fine
 % maxsz_mesh = 0.025;
@@ -150,10 +154,10 @@ if ~exist(fullfile(script_folder,"\model\model_recon.mat"),'file')
     drawnow;
     %%
     save(fullfile(script_folder,"\model\model_recon"),"fmdl");
-    var = load("Human Thorax\model\model_recon.mat");
+    var = load("HumanThorax\model\model_recon.mat");
     fmdl_recon = var.fmdl;
 else
-    var = load("Human Thorax\model\model_recon.mat");
+    var = load("HumanThorax\model\model_recon.mat");
     fmdl_recon = var.fmdl;
 
     subplot(1,3,1)
@@ -189,10 +193,10 @@ if ~exist(fullfile(script_folder,"\model\model_homogeneous.mat"),'file')
     drawnow;
     %%
     save(fullfile(script_folder,"\model\model_homogeneous"),"fmdl");
-    var = load("Human Thorax\model\model_homogeneous.mat");
+    var = load("HumanThorax\model\model_homogeneous.mat");
     fmdl_hom = var.fmdl;
 else
-    var = load("Human Thorax\model\model_homogeneous.mat");
+    var = load("HumanThorax\model\model_homogeneous.mat");
     fmdl_hom = var.fmdl;
 
     subplot(1,2,1)
@@ -240,10 +244,10 @@ end
 %     drawnow;
 % 
 %     save(fullfile(script_folder,"\model\model_inhomogeneous"),"fmdl");
-%     var = load("Human Thorax\model\model_inhomogeneous.mat");
+%     var = load("HumanThorax\model\model_inhomogeneous.mat");
 %     fmdl_inhom = var.fmdl;
 % else
-%     var = load("Human Thorax\model\model_inhomogeneous.mat");
+%     var = load("HumanThorax\model\model_inhomogeneous.mat");
 %     fmdl_inhom = var.fmdl;
 % 
 %     subplot(1,2,2)
@@ -635,9 +639,20 @@ if ~exist('data/sensor_positions_opt.mat','file')
 
         imgsh{n} = imgh;
         imgsh{n} = assign_sensor_locations(imgsh{n},sensor_positions_0);
+    
+        img_out_a_opt = optimize_sensor_configuration(imgsh{n},inv_Gamma_prior_3_axis,inv_Gamma_noise_3_axis,...
+                jac_coord_transf_xi,q_to_x_xi,x_to_q_xi,'a-opt','mdeit3',3,options);
 
-        img_out = optimize_sensor_configuration(imgsh{n},inv_Gamma_prior_3_axis,inv_Gamma_noise_3_axis,...
-            jac_coord_transf_xi,q_to_x_xi,x_to_q_xi,'a-opt','mdeit3',3,options);
+        img_out_d_opt = optimize_sensor_configuration(imgsh{n},inv_Gamma_prior_3_axis,inv_Gamma_noise_3_axis,...
+                jac_coord_transf_xi,q_to_x_xi,x_to_q_xi,'d-opt','mdeit3',3,options);
+
+        if strcmp(opt_mode,'a-opt')
+            img_out = img_out_a_opt;
+        elseif strcmp(opt_mode,'d-opt')
+            img_out = img_out_d_opt;
+        else
+            error('Unexpected!');
+        end
 
         imgout{n} = img_out;
         n=n+1;
@@ -652,6 +667,27 @@ else
     imgtemp = assign_sensor_locations(imgtemp,sensor_positions_opt);
     imgout{1} = imgtemp;
 end
+
+%% Check if d-opt and a-opt results are similar in a plot
+
+figure
+show_fem_transparent_edges(img_out_a_opt);
+h1 = plot_sensors(img_out_a_opt,[],'b','.');              % multiple handles
+h2 = plot_sensors(img_out_d_opt,[],'r','d');   % multiple handles
+
+ax = gca;
+lines = findobj(ax, 'Type', 'line');
+
+lines1 = findobj(ax, 'Type', 'line', '-and', 'Marker', '.'); % or '.' etc.
+lines2 = findobj(ax, 'Type', 'line', '-and', 'Marker', 'd'); % or '.' etc.
+
+legend([lines1(1), lines2(1)], {'a-opt','d-opt'},'location','northwest')
+
+view(0,90)
+axis([-rmax rmax -rmax rmax])
+box on
+title(sprintf('A-opt/D-opt config'),'Interpreter','latex')
+
 
 %% Find sensor positions close to boundary
 
