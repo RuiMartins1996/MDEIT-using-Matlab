@@ -57,7 +57,7 @@ model_parameters.material.position = [0.5 0 model_parameters.height/2];
 % model_parameters.material.radius = model_parameters.material.radius/2;
 
 background_conductivity = 3.28e-1/sigma0;
-anomaly_conductivity = 1e-12/sigma0;
+anomaly_conductivity = background_conductivity*0.9;
 
 maxsz_data =  model_parameters.radius/10;
 maxsz_reconstruction = model_parameters.radius/10;
@@ -67,7 +67,7 @@ current_amplitude = 2.4e-3/I0;
 % Set noise type and snr
 noise_type = 'white';
 
-snr = 1;
+snr = 100;
 
 %% Stimulation pattern is not the default. For now, edit it manually
 
@@ -483,6 +483,113 @@ sigma_std_mdeit = noise_correction(imgh,imgi,J_mdeit,lambda_mdeit,func_mdeit,15)
 sigma_std_eit_mdeit = noise_correction(imgh,imgi,A_aug,lambda_opt,funct_eit_mdeit,15,U,S,V);
 
 
+%% Test
+
+z_level = model_parameters.height/2;
+npoints= 128;
+
+img_eit_n = img_tsvd_eit;
+img_eit_n.elem_data = img_eit_n.elem_data./sigma_std_eit;
+img_mdeit_n = img_tsvd_mdeit;
+img_mdeit_n.elem_data = img_mdeit_n.elem_data./sigma_std_mdeit;
+img_combined_n = img_combined;
+img_combined_n.elem_data = img_combined_n.elem_data./sigma_std_eit_mdeit;
+
+
+figure
+t = tiledlayout(3,4);
+ax = gobjects(1,4);
+
+min_cond = min([img_combined.elem_data(:);img_tsvd_eit.elem_data(:);img_tsvd_mdeit.elem_data(:)]);
+max_cond = max([img_combined.elem_data(:);img_tsvd_eit.elem_data(:);img_tsvd_mdeit.elem_data(:)]);
+
+ax(1) = nexttile; 
+show_fem_transparent_edges(img_tsvd_eit);
+view(0,0)
+box on;
+title('EIT','Interpreter','latex')
+
+ax(2) = nexttile; 
+show_fem_transparent_edges(img_tsvd_mdeit);
+view(0,0)
+box on;
+title('MDEIT','Interpreter','latex')
+
+ax(3) = nexttile;
+show_fem_transparent_edges(img_combined);
+view(0,0)
+box on;
+title('MDEIT+EIT','Interpreter','latex')
+
+ax(4) = nexttile;
+show_fem_transparent_edges(imgi);
+view(0,0)
+box on;
+title('Ground Truth','Interpreter','latex')
+
+clim = [min_cond max_cond];
+set(ax, 'CLim', clim);
+
+% After plotting and setting CLim
+
+% Get positions of the first-row axes
+pos = arrayfun(@(a) a.Position, ax, 'UniformOutput', false);
+pos = vertcat(pos{:});
+
+% Compute bounding box of the row
+left   = min(pos(:,1));
+bottom = min(pos(:,2));
+right  = max(pos(:,1) + pos(:,3));
+top    = max(pos(:,2) + pos(:,4));
+
+% Create colorbar (attach to one axis, doesn't matter which)
+cb = colorbar(ax(end));
+
+% Manually place it aligned with the row
+cb.Position = [right + 0.01, bottom, 0.02, top - bottom];
+
+
+
+nexttile; 
+plot_image_slice(z_level,npoints,img_eit_n);
+box on;
+title('EIT','Interpreter','latex')
+nexttile; 
+plot_image_slice(z_level,npoints,img_mdeit_n);
+box on;
+title('MDEIT','Interpreter','latex')
+nexttile; 
+plot_image_slice(z_level,npoints,img_combined_n);
+box on;
+title('MDEIT+EIT','Interpreter','latex')
+nexttile; 
+plot_image_slice(z_level,npoints,imgi);
+box on;
+title('Ground Truth','Interpreter','latex')
+
+nexttile; 
+show_fem_transparent_edges(img_eit_n);
+view(0,0)
+box on;
+title('EIT','Interpreter','latex')
+nexttile; 
+show_fem_transparent_edges(img_mdeit_n);
+view(0,0)
+box on;
+title('MDEIT','Interpreter','latex')
+nexttile; 
+show_fem_transparent_edges(img_combined_n);
+view(0,0)
+box on;
+title('MDEIT+EIT','Interpreter','latex')
+nexttile; 
+show_fem_transparent_edges(imgi);
+view(0,0)
+box on;
+title('Ground Truth','Interpreter','latex')
+
+
+
 %%
 figure
 
@@ -520,6 +627,7 @@ img_mdeit_n = img_tsvd_mdeit;
 img_mdeit_n.elem_data = img_mdeit_n.elem_data./sigma_std_mdeit;
 img_combined_n = img_combined;
 img_combined_n.elem_data = img_combined_n.elem_data./sigma_std_eit_mdeit;
+
 
 
 

@@ -108,7 +108,7 @@ end
 data_vec = {data_eit,data_mdeit_x,data_mdeit_y,data_mdeit_z,data_mdeit_3,data_aug};
 name_vec = {'eit','mdeit-x','mdeit-y','mdeit-z','mdeit-3','eit+mdeit'};
 
-%% Plot condition number
+%% Plot condition number w.r.t. number of measurements
 
 min_num_measurements = inf;
 max_num_measurements = -inf;
@@ -146,6 +146,43 @@ legend(name_vec,'Interpreter','latex','Location','northwest');
 xlabel('Number of measurements','Interpreter','latex')
 ylabel("$\kappa$",'Interpreter','latex')
 
+%% Plot condition number w.r.t. number of sensors
+
+min_num_sensors = inf;
+max_num_sensors = -inf;
+
+number_of_elements = zeros(numel(data_vec),numel(data_vec{1}.num_of_elements));
+
+figure
+hold on
+set(gca, 'Color', [0.95 0.95 0.95])
+
+for i = 1:length(data_vec)
+    number_of_elements(i,:) = data_vec{1}.num_of_elements;
+
+    min_num_sensors = min(min_num_sensors,min(data_vec{i}.num_of_sensors));
+    max_num_sensors = max(max_num_sensors,max(data_vec{i}.num_of_sensors));
+    
+    [num_sensors_sorted,ids] = sort(data_vec{i}.num_of_sensors);
+    condition_number_vec = compute_condition_number(data_vec{i});
+    condition_number_sorted = condition_number_vec(ids);
+
+    plot(num_sensors_sorted,condition_number_sorted,...
+        'Marker',markers{i},'MarkerSize',marker_size,'Color',colors(i,:));
+end
+
+hold off
+grid on;grid minor;
+box on;
+set(gca,'YScale','log')
+set(gca,'XScale','log')
+
+xlim([min_num_sensors,max_num_sensors])
+
+legend(name_vec,'Interpreter','latex','Location','northwest');
+
+xlabel('Number of sensors','Interpreter','latex')
+ylabel("$\kappa$",'Interpreter','latex')
 %% Plot rank
 min_num_measurements = inf;
 max_num_measurements = -inf;
@@ -261,6 +298,75 @@ box on;
 xlabel('Number of measurements','Interpreter','latex')
 ylabel('$\rho (\%)$','Interpreter','latex')
 
+%% Test
+
+figure
+
+% --- Top axes (10 to 100) ---
+ax1 = axes;
+hold on
+plot(all_number_of_sensors_sorted{show_ids(1)},all_ranks_sorted{show_ids(1)},...
+    'Color',colors(show_ids(1),:),'Marker',markers{show_ids(1)},'LineWidth',1)
+
+plot(all_number_of_sensors_sorted{show_ids(3)},...
+    all_ranks_sorted{show_ids(4)}-all_ranks_sorted{show_ids(3)},...
+    'Color',colors(7,:),'Marker',markers{6},'LineWidth',1)
+
+hold off
+ylim(ax1, [1 430])
+
+ax1.XTickLabel = [];   % hide x labels
+ax1.Position = [0.1 0.55 0.8 0.35];
+grid on;grid minor;box on;
+
+
+legend('eit','eit-mdeit3/mdeit3 diff','Interpreter','latex','Location','northwest')
+
+% set(gca,'YScale','log')
+
+% % --- Top axes (10 to 100) ---
+% ax1 = axes;
+% hold on
+% for i = show_ids(3:4)
+%     plot(all_number_of_sensors_sorted{i},all_ranks_sorted{i},...
+%         'Color',colors(i,:),'Marker',markers{i},'LineWidth',1)
+% end
+% hold off
+% ylim(ax1, [20 3300])
+% 
+% ax1.XTickLabel = [];   % hide x labels
+% ax1.Position = [0.1 0.55 0.8 0.35];
+% grid on;grid minor;box on;
+
+
+
+% set(gca,'YScale','log')
+
+ylabel('Comibned - mdeit3 rank diff','Interpreter','latex')
+
+% --- Bottom axes (1 to 10) ---
+ax2 = axes;
+hold on
+for i = show_ids(1:4)
+    plot(all_number_of_sensors_sorted{i},all_ranks_sorted{i},...
+        'Color',colors(i,:),'Marker',markers{i},'LineWidth',1)
+end
+hold off
+ylim(ax2, [5 3300])
+ax2.Position = [0.1 0.1 0.8 0.35];
+grid on;grid minor;box on;
+
+name_vec = {'eit','mdeit-x','mdeit-y','mdeit-z','mdeit-3','eit+mdeit'};
+legend(name_vec{show_ids},'Interpreter','latex','Location','northwest')
+
+% set(gca,'YScale','log')
+
+% Link x-axes
+linkaxes([ax1, ax2], 'x')
+
+xlabel('Number of sensors/electrodes','Interpreter','latex')
+ylabel('Rank','Interpreter','latex')
+
 %% Plot of rank w.r.t. number of electrodes
 
 figure
@@ -273,10 +379,10 @@ for i = show_ids
         'Color',colors(i,:),'Marker',markers{i},'LineWidth',1)
 end
 
-legend(name_vec_m{show_ids},'Interpreter','latex','Location','southeast')
+legend(name_vec_m{show_ids},'Interpreter','latex','Location','northwest')
 
-set(gca,'YScale','log')
-set(gca,'XScale','log')
+% set(gca,'YScale','log')
+% set(gca,'XScale','log')
 
 grid on;grid minor;
 box on;
