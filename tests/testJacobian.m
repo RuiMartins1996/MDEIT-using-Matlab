@@ -42,7 +42,7 @@ classdef testJacobian < matlab.unittest.TestCase
             current_amplitude = 2.4e-3/I0;
             background_conductivity = 3.28e-1/sigma0;
             
-            model_parameters = create_default_3d_model_parameters(l0, z0, sigma0, I0);
+            model_parameters = create_kai_3d_model_parameters(l0, z0, sigma0, I0);
             
             model_parameters.maxsz = min(model_parameters.height,model_parameters.radius);
             model_parameters.height =1;
@@ -74,13 +74,13 @@ classdef testJacobian < matlab.unittest.TestCase
             recon_mode = 'mdeit1';
 
             select_sensor_axis = 1;
-            J_mdeit_1 = calc_jacobian_mdeit(imgh,imgh.elem_data,lambdatimesdAdp,A,recon_mode,select_sensor_axis,verbose);
+            J_mdeit_1 = calc_jacobian_mdeit(imgh,imgh.elem_data,lambdatimesdAdp,A,recon_mode,select_sensor_axis);
 
             select_sensor_axis = 2;
-            J_mdeit_2 = calc_jacobian_mdeit(imgh,imgh.elem_data,lambdatimesdAdp,A,recon_mode,select_sensor_axis,verbose);
+            J_mdeit_2 = calc_jacobian_mdeit(imgh,imgh.elem_data,lambdatimesdAdp,A,recon_mode,select_sensor_axis);
 
             select_sensor_axis = 3;
-            J_mdeit_3 = calc_jacobian_mdeit(imgh,imgh.elem_data,lambdatimesdAdp,A,recon_mode,select_sensor_axis,verbose);
+            J_mdeit_3 = calc_jacobian_mdeit(imgh,imgh.elem_data,lambdatimesdAdp,A,recon_mode,select_sensor_axis);
             
             recon_mode = 'mdeit3';
             J_mdeit_3d = calc_jacobian_mdeit(imgh,imgh.elem_data,lambdatimesdAdp,A,recon_mode);
@@ -157,7 +157,7 @@ classdef testJacobian < matlab.unittest.TestCase
             current_amplitude = 2.4e-3/I0;
             background_conductivity = 3.28e-1/sigma0;
 
-            model_parameters = create_default_3d_model_parameters(l0, z0, sigma0, I0);
+            model_parameters = create_kai_3d_model_parameters(l0, z0, sigma0, I0);
             
             model_parameters.maxsz = min(model_parameters.height,model_parameters.radius);
             model_parameters.height =1;
@@ -254,7 +254,7 @@ classdef testJacobian < matlab.unittest.TestCase
             recon_mode = 'mdeit1';
 
             select_sensor_axis = 2; % theta axis
-            J_mdeit_2 = calc_jacobian_mdeit(imgh,imgh.elem_data,lambdatimesdAdp,A,recon_mode,select_sensor_axis,verbose);
+            J_mdeit_2 = calc_jacobian_mdeit(imgh,imgh.elem_data,lambdatimesdAdp,A,recon_mode,select_sensor_axis);
             
             % Compute jacobian with finite-differences ( for this case,
             % delta = min(imgh.elem_data)*1e-5 seemed to give good results)
