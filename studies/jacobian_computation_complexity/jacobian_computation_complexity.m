@@ -42,7 +42,7 @@ background_conductivity = 3.28e-1/sigma0;  %page 163 mentions a saline solution 
 
 %% Define forward model (2D real tank experiment)
 
-model_parameters = create_default_3d_model_parameters(l0, z0, sigma0, I0);
+model_parameters = create_kai_3d_model_parameters(l0, z0, sigma0, I0);
 
 % A material defines the geometry of that material inside the domain, not
 % its properties, like conductivity.
