@@ -1,0 +1,735 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.6cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{bm}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\newtheorem{remark}{Remark}
+
+% --- Notation macros ---
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\logdet}{\operatorname{log\,det}}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\T}{\mathsf{T}}
+\newcommand{\Gnoise}{\Gamma_{\mathrm{noise}}}
+\newcommand{\Gprior}{\Gamma_{\mathrm{pr}}}
+\newcommand{\Gpost}{\Gamma_{\mathrm{post}}}
+\newcommand{\sensor}[1]{\bm{s}_{#1}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+\title{Bayesian Optimization of Sensor Positions in\\
+Magnetic Detection Electrical Impedance Tomography}
+\author{Theory companion to \code{studies/optimal\_sensors\_bayesian\_approach/main.m}}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document describes the theory implemented in \code{main.m} for optimizing the positions of
+magnetometers in magnetic detection electrical impedance tomography (MDEIT). The approach follows
+the Bayesian optimal experiment design framework of Hyv\"onen, Sepp\"anen and Staboulis
+[\emph{Optimizing electrode positions in electrical impedance tomography}, SIAM J.\ Appl.\ Math.,
+arXiv:1404.7300], who optimized \emph{electrode} positions in EIT. Here the design variables are
+instead the positions of external magnetic field sensors. The complete electrode model is
+linearized around the prior mean conductivity, which yields an explicit Gaussian posterior
+covariance. The sensor positions are then chosen to minimize either the trace
+(A-optimality) or the log-determinant (D-optimality) of the posterior covariance, using analytic
+gradients obtained from adjoint solutions and explicit derivatives of the Biot--Savart kernel.
+\end{abstract}
+
+\section{Problem setting}
+
+Let $\Omega \subset \R^3$ be a conducting body with electrical conductivity $\sigma$, and let
+$M \geq 1$ magnetometers be located at positions $\sensor{m} \in \R^3 \setminus \overline{\Omega}$,
+$m = 1,\dots,M$. Currents are injected through $L$ fixed surface electrodes using $N$ stimulation
+patterns. Each injected pattern drives an internal current density
+$\bm{J} = -\sigma \nabla u$, whose magnetic flux density is measured by the sensors.
+
+The inverse problem of MDEIT is to recover the (discretized) conductivity
+$\sigma \in \R^{n_{\mathrm{el}}}$ from these magnetic measurements. The \emph{design} problem
+considered here is: given a prior distribution for $\sigma$ and a noise model, place the sensors
+$\{\sensor{m}\}$ so that the posterior distribution of $\sigma$ given the data is as
+localized (informative) as possible.
+
+Two features distinguish this setting from the EIT electrode-position problem of Hyv\"onen et al.:
+\begin{enumerate}
+  \item The electrodes are \emph{fixed}; only the contact-free magnetometers move. Consequently the
+        forward PDE and its finite element (FE) system matrix do not depend on the design
+        variables.
+  \item The sensor positions enter the measurement map only through the smooth Biot--Savart
+        kernel. The derivatives with respect to the design variables are therefore ordinary
+        (explicit) derivatives of a volume integral; no shape derivatives of the boundary value
+        problem are required. This is analytically and computationally simpler than the
+        electrode-position case, which requires second-order Fr\'echet (shape) derivatives of the
+        complete electrode model.
+\end{enumerate}
+
+\section{Forward model}
+
+\subsection{Complete electrode model}
+
+The electric potential $u$ inside $\Omega$ and the electrode potentials
+$U = [U_1,\dots,U_L]^\T$ satisfy the complete electrode model (CEM):
+\begin{equation}
+\label{eq:cem}
+\begin{aligned}
+  \nabla \cdot (\sigma \nabla u) &= 0 && \text{in } \Omega, \\
+  \sigma \, \partial_\nu u &= 0 && \text{on } \partial\Omega \setminus \cup_e E_e, \\
+  u + z_e \, \sigma \, \partial_\nu u &= U_e && \text{on } E_e, \quad e = 1,\dots,L, \\
+  \int_{E_e} \sigma \, \partial_\nu u \, \dd S &= I_e, && e = 1,\dots,L,
+\end{aligned}
+\end{equation}
+where $z_e$ are the contact impedances and $I = [I_1,\dots,I_L]^\T$ the injected current pattern
+(with $\sum_e I_e = 0$). Discretizing with piecewise linear finite elements yields the symmetric
+block system
+\begin{equation}
+  \begin{pmatrix} A_c & A_e \\ A_e^\T & A_d \end{pmatrix}
+  \begin{pmatrix} u \\ U \end{pmatrix}
+  =
+  \begin{pmatrix} 0 \\ I \end{pmatrix},
+\end{equation}
+where $A_c \in \R^{n_n \times n_n}$ contains the $\sigma$-weighted stiffness matrix plus contact
+terms, and $A_e$, $A_d$ contain only contact-impedance terms (independent of $\sigma$).
+Eliminating $U$ gives the Schur complement
+\begin{equation}
+\label{eq:schur}
+  S(\sigma) \;=\; A_c - A_e A_d^{-1} A_e^\T,
+\end{equation}
+which is the symmetric positive (semi)definite operator used for all forward and adjoint solves
+(function \code{M} in the code). Only $A_c$ depends on $\sigma$, so
+\begin{equation}
+\label{eq:dSdsigma}
+  v^\T \frac{\partial S}{\partial \sigma_k}\, w
+  \;=\; \int_{T_k} \nabla v \cdot \nabla w \, \dd V
+  \;=\; |T_k| \, (\nabla v)_k \cdot (\nabla w)_k ,
+\end{equation}
+for any FE functions $v,w$, where $T_k$ is the $k$-th tetrahedron and the gradients are constant
+per element for $P_1$ elements.
+
+\subsection{Biot--Savart law and its discretization}
+
+The magnetic flux density at sensor position $\sensor{m}$ generated by the internal current
+density $\bm{J} = -\sigma\nabla u$ is
+\begin{equation}
+\label{eq:biotsavart}
+  \bm{B}(\sensor{m})
+  \;=\; \frac{\mu_0}{4\pi} \int_\Omega
+        \bm{J}(\bm{r}) \times \frac{\sensor{m} - \bm{r}}{|\sensor{m} - \bm{r}|^3} \, \dd V .
+\end{equation}
+With $P_1$ elements, $\nabla u$ is constant on each element and is obtained from the sparse
+gradient matrices $G_x, G_y, G_z \in \R^{n_{\mathrm{el}} \times n_n}$, i.e.\
+$(\partial_x u)_k = (G_x u)_k$, etc. The geometric part of the kernel is collected in the dense
+matrices $R_x, R_y, R_z \in \R^{M \times n_{\mathrm{el}}}$,
+\begin{equation}
+\label{eq:Rdef}
+  (R_j)_{mk} \;=\; \int_{T_k} \frac{(\sensor{m} - \bm{r})_j}{|\sensor{m} - \bm{r}|^3}\, \dd V,
+  \qquad j \in \{x,y,z\},
+\end{equation}
+evaluated with a 35-point quadrature rule on each tetrahedron
+(\code{compute\_r\_matrices\_local}, \code{dRmkj\_dp}). Writing
+$\Sigma = \operatorname{diag}(\sigma)$, expansion of the cross product in
+\eqref{eq:biotsavart} yields the Cartesian components of the field at all sensors:
+\begin{equation}
+\label{eq:Cmatrices}
+\begin{aligned}
+  C_x(\sigma) &= -R_z \Sigma G_y + R_y \Sigma G_z, \\
+  C_y(\sigma) &= -R_x \Sigma G_z + R_z \Sigma G_x, \\
+  C_z(\sigma) &= -R_y \Sigma G_x + R_x \Sigma G_y,
+\end{aligned}
+\qquad
+  B_j(\sensor{m}) = \frac{\mu_0}{4\pi}\, \big(C_j\, u\big)_m .
+\end{equation}
+Each sensor $m$ measures the projection of $\bm{B}$ onto its axes
+$\hat{\bm{g}}^{(m)}_d$, $d = 1,2,3$, stored as $g_{m,d,j}$. The measurement operator for
+axis $d$ is
+\begin{equation}
+\label{eq:Gamma}
+  \Gamma_d(\sigma;\, \bm{s})
+  \;=\; \frac{\mu_0}{4\pi}\,
+        \big(\, g_{:,d,x} \odot C_x + g_{:,d,y} \odot C_y + g_{:,d,z} \odot C_z \,\big)
+  \;\in\; \R^{M \times n_n},
+\end{equation}
+where $\odot$ denotes row-wise scaling (\code{compute\_gamma\_matrices\_local}). The measured
+datum for sensor $m$, stimulation $l$ and axis $d$ is then simply
+\begin{equation}
+  B_{d,m}^{(l)} \;=\; \big(\Gamma_d\, u^{(l)}\big)_m,
+  \qquad S(\sigma)\, u^{(l)} \;=\; b^{(l)} .
+\end{equation}
+Note that $\Gamma_d$ is \emph{linear} in $\sigma$ (through $\Sigma$) and depends on the sensor
+positions only through the matrices $R_j$ in \eqref{eq:Rdef}.
+
+For \emph{1-axis} MDEIT one fixed axis $d$ is measured, giving $MN$ data points; for
+\emph{3-axis} MDEIT the data of all three axes are stacked, giving $3MN$ data points.
+
+\section{Bayesian inversion and the linearized posterior}
+
+Following the Bayesian paradigm, the discretized conductivity is a random vector with a Gaussian
+prior, and the data are corrupted by additive Gaussian noise,
+\begin{equation}
+  \sigma \sim \mathcal{N}(\sigma_*,\, \Gprior),
+  \qquad
+  V \;=\; \mathcal{B}(\sigma;\, \bm{s}) + \varepsilon,
+  \qquad
+  \varepsilon \sim \mathcal{N}(0,\, \Gnoise),
+\end{equation}
+where $\mathcal{B}$ stacks all measurements and $\bm{s} = (\sensor{1},\dots,\sensor{M})$ collects
+the design variables. To obtain a computationally tractable design criterion, the measurement map
+is linearized around the prior mean,
+\begin{equation}
+  \mathcal{B}(\sigma) \;\approx\; \mathcal{B}(\sigma_*) + J\,(\sigma - \sigma_*),
+  \qquad
+  J = J(\sigma_*;\, \bm{s}) = \frac{\partial \mathcal{B}}{\partial \sigma}\Big|_{\sigma_*} .
+\end{equation}
+Under this linearization the posterior is Gaussian, with covariance
+\begin{equation}
+\label{eq:posterior}
+  \Gpost \;=\; H^{-1},
+  \qquad
+  H \;=\; J^\T \Gnoise^{-1} J + \Gprior^{-1} .
+\end{equation}
+The essential observation for experiment design is that $\Gpost$ \emph{does not depend on the
+measured data} --- only on the Jacobian $J$, hence on the sensor positions $\bm{s}$. The design
+can therefore be optimized offline, before any measurement is taken.
+
+\section{Optimality criteria}
+
+\paragraph{A-optimality.}
+Minimizing the expected mean-square error of the conditional-mean estimate (with unit weighting)
+is equivalent to minimizing the trace of the posterior covariance:
+\begin{equation}
+\label{eq:aopt}
+  \Phi_{\mathrm{A}}(\bm{s}) \;=\; \tr\!\big(\Gpost\big) \;=\; \tr\!\big(H^{-1}\big)
+  \qquad \text{(\code{compute\_cost\_function\_a\_opt})}.
+\end{equation}
+
+\paragraph{D-optimality.}
+Maximizing the expected information gain (the Kullback--Leibler divergence from the prior to the
+posterior, marginalized over the data) is, for Gaussian linearized models, equivalent to
+minimizing the log-determinant of the posterior covariance:
+\begin{equation}
+\label{eq:dopt}
+  \Phi_{\mathrm{D}}(\bm{s}) \;=\; \logdet \Gpost \;=\; -\logdet H
+  \qquad \text{(\code{compute\_cost\_function\_d\_opt})}.
+\end{equation}
+To avoid overflow/underflow, the determinant is evaluated through the Cholesky factorization
+$H = LL^\T$:
+\begin{equation}
+  \logdet H \;=\; 2 \sum_i \log L_{ii} .
+\end{equation}
+
+\section{Gradients of the design criteria}
+
+Let $p$ denote one Cartesian coordinate of one sensor position. Differentiating
+$H = J^\T \Gnoise^{-1} J + \Gprior^{-1}$,
+\begin{equation}
+  \frac{\partial H}{\partial p}
+  \;=\;
+  \frac{\partial J}{\partial p}^{\!\T} \Gnoise^{-1} J
+  \;+\;
+  J^\T \Gnoise^{-1} \frac{\partial J}{\partial p} .
+\end{equation}
+Using $\dd\, \tr(H^{-1}) = -\tr(H^{-1}\, \dd H\, H^{-1})$ and
+$\dd \logdet H = \tr(H^{-1} \dd H)$, together with the symmetry of $H$, one obtains
+\begin{align}
+\label{eq:gradA}
+  \frac{\partial \Phi_{\mathrm{A}}}{\partial p}
+  &= -2\, \tr\!\Big( H^{-2} J^\T \Gnoise^{-1} \frac{\partial J}{\partial p} \Big)
+   = -2\, \Big\langle W_{\mathrm{A}},\; \frac{\partial J}{\partial p} \Big\rangle_F,
+  & W_{\mathrm{A}} &= \Gnoise^{-1} J H^{-2}, \\
+\label{eq:gradD}
+  \frac{\partial \Phi_{\mathrm{D}}}{\partial p}
+  &= -2\, \tr\!\Big( H^{-1} J^\T \Gnoise^{-1} \frac{\partial J}{\partial p} \Big)
+   = -2\, \Big\langle W_{\mathrm{D}},\; \frac{\partial J}{\partial p} \Big\rangle_F,
+  & W_{\mathrm{D}} &= \Gnoise^{-1} J H^{-1},
+\end{align}
+where $\langle A, B\rangle_F = \sum_{ij} A_{ij} B_{ij}$ is the Frobenius inner product. The
+matrices $H^{-1}$ and $H^{-2}$ are computed by repeated triangular solves with the Cholesky
+factor $L$ (functions \code{compute\_cost\_function\_gradient\_\{a,d\}\_opt\_optimized}).
+
+Since only the rows of $J$ belonging to sensor $m$ depend on $\sensor{m}$, the Frobenius product
+in \eqref{eq:gradA}--\eqref{eq:gradD} reduces to a sum over that sensor's rows:
+\begin{equation}
+  \frac{\partial \Phi}{\partial (\sensor{m})_p}
+  \;=\;
+  -2 \sum_{l=1}^{N} \sum_{k=1}^{n_{\mathrm{el}}}
+     W_{(m,l),k}\; \frac{\partial J_{(m,l),k}}{\partial (\sensor{m})_p},
+\end{equation}
+which is exactly the loop structure of the gradient routines. For 3-axis MDEIT the same
+expression is summed over the three axis blocks of the stacked Jacobian
+$J = [J_x;\, J_y;\, J_z]$.
+
+\section{The sensitivity Jacobian and its position derivatives}
+
+\subsection{Jacobian with respect to conductivity (adjoint method)}
+
+The datum for sensor $m$, stimulation $l$ (one fixed axis $d$; the axis index is suppressed) is
+$B_m^{(l)} = (\Gamma\, u^{(l)})_m$ with $S(\sigma)\, u^{(l)} = b^{(l)}$. Differentiating with
+respect to $\sigma_k$ and using
+$\partial u^{(l)}/\partial \sigma_k = -S^{-1} (\partial S/\partial \sigma_k)\, u^{(l)}$ gives
+\begin{equation}
+  J_{(m,l),k}
+  \;=\;
+  \underbrace{\lambda_m^\T \frac{\partial S}{\partial \sigma_k}\, u^{(l)}}_{\text{adjoint part}}
+  \;+\;
+  \underbrace{\Big( \frac{\partial \Gamma}{\partial \sigma_k}\, u^{(l)} \Big)_{\!m}}_{\text{direct part}},
+  \qquad
+  S\, \lambda_m \;=\; -\,\Gamma^\T e_m ,
+\end{equation}
+where $e_m$ is the $m$-th unit vector; the adjoint solves are performed with preconditioned
+conjugate gradients. By \eqref{eq:dSdsigma}, the adjoint part is
+$|T_k|\, (\nabla \lambda_m)_k \cdot (\nabla u^{(l)})_k$, and since $\Gamma$ is linear in
+$\sigma$, the direct part follows from \eqref{eq:Cmatrices} by replacing $\Sigma$ with
+$e_k e_k^\T$. In the code these are the \code{dfdx} and \code{dfdp} terms of
+\code{calc\_jacobian\_1axis\_direct\_fully\_vectorized\_local}.
+
+\subsection{Position derivative of the Biot--Savart matrices}
+
+The only quantities depending on $\sensor{m}$ are the rows of $R_x, R_y, R_z$. With
+$\bm{d} = \sensor{m} - \bm{r}$, differentiating \eqref{eq:Rdef} under the integral sign gives
+\begin{equation}
+\label{eq:dRdp}
+  \frac{\partial (R_j)_{mk}}{\partial (\sensor{m})_p}
+  \;=\;
+  \int_{T_k} \frac{\delta_{jp}\, |\bm{d}|^2 - 3\, d_j\, d_p}{|\bm{d}|^5}\, \dd V ,
+  \qquad j,p \in \{x,y,z\},
+\end{equation}
+evaluated with the same quadrature rule (\code{dRmkj\_dp}, \code{dRmkj\_xyz}). This explicit,
+smooth derivative is what replaces the electrode shape derivatives of the EIT setting.
+
+\subsection{Position derivative of the Jacobian}
+
+Differentiating $J_{(m,l),k}$ with respect to $p = (\sensor{m})_p$ produces two contributions
+(functions \code{compute\_dJ\_ds}, \code{compute\_dJ\_xyz}, \code{compute\_dJxyz\_xyz}):
+\begin{equation}
+\label{eq:dJ}
+  \frac{\partial J_{(m,l),k}}{\partial p}
+  \;=\;
+  \underbrace{|T_k| \,
+    \Big(\nabla \frac{\partial \lambda_m}{\partial p}\Big)_{\!k} \cdot \big(\nabla u^{(l)}\big)_k}_{\code{dJ1}}
+  \;+\;
+  \underbrace{\frac{\partial}{\partial p}
+    \Big( \frac{\partial \Gamma}{\partial \sigma_k}\, u^{(l)} \Big)_{\!m}}_{-\,\code{dJ2}} .
+\end{equation}
+\begin{itemize}
+  \item The second term is obtained directly from \eqref{eq:Cmatrices} and \eqref{eq:dRdp}: it is
+        the direct part of the Jacobian with $R_j$ replaced by $\partial R_j / \partial p$.
+  \item The first term requires the derivative of the adjoint solutions. Since $S$ does not
+        depend on the sensor positions, differentiating $S\lambda_m = -\Gamma^\T e_m$ gives one
+        extra adjoint solve per sensor and coordinate,
+        \begin{equation}
+          S\, \frac{\partial \lambda_m}{\partial p}
+          \;=\;
+          -\, \frac{\partial \Gamma^\T}{\partial p}\, e_m ,
+        \end{equation}
+        where $\partial \Gamma / \partial p$ again follows from \eqref{eq:Gamma} and
+        \eqref{eq:dRdp} (functions \code{compute\_dlambda\_ds}, \code{compute\_dlambda\_xyz},
+        \code{compute\_dlambdaxyz\_xyz}).
+\end{itemize}
+Note that the forward solutions $u^{(l)}$ do not depend on the sensor positions at all --- another
+consequence of the electrodes being fixed.
+
+\section{Parametrization, constraints and optimization}
+
+\subsection{Cylindrical coordinates and chain rule}
+
+For a cylindrical tank it is convenient to parametrize each sensor by
+$q_m = (r_m, \theta_m, z_m)$ with
+$\bm{x}_m = (r_m \cos\theta_m,\, r_m \sin\theta_m,\, z_m)$. The gradient with respect to $q$
+follows from the chain rule,
+\begin{equation}
+\label{eq:chainrule}
+  \frac{\partial \Phi}{\partial q_i}
+  \;=\;
+  \sum_{p=1}^{3} \frac{\partial x_p}{\partial q_i}\, \frac{\partial \Phi}{\partial x_p},
+  \qquad
+  \frac{\partial \bm{x}}{\partial (r,\theta,z)}
+  =
+  \begin{pmatrix}
+    \cos\theta & \sin\theta & 0 \\
+    -r\sin\theta & r\cos\theta & 0 \\
+    0 & 0 & 1
+  \end{pmatrix},
+\end{equation}
+implemented in \code{dphidp\_to\_dphidq} with the transformation matrix from
+\code{compute\_jacobian\_coordinate\_transformation\_cylindrical}.
+
+\begin{remark}
+The transformation matrix in \eqref{eq:chainrule} depends on the \emph{current} sensor
+coordinates $(r_m, \theta_m)$ and must therefore be re-evaluated at every iterate of the
+optimizer, not only at the initial configuration.
+\end{remark}
+
+Two constrained search domains are used with the interior-point algorithm of \code{fmincon}
+(analytic gradients supplied, L-BFGS Hessian approximation):
+\begin{itemize}
+  \item \emph{cylinder shell}: $r_m = r_0$ fixed, $\theta_m$ free, $z_m \in [z_{\min}, z_{\max}]$;
+  \item \emph{annular region}: $r_m \in [r_{\min}, r_{\max}]$, $\theta_m$ free,
+        $z_m \in [z_{\min}, z_{\max}]$.
+\end{itemize}
+For unconstrained optimizers, bounded coordinates are mapped to $\R$ by the logistic
+reparametrization $r = r_{\min} + (r_{\max}-r_{\min})\,\varsigma(\xi)$,
+$\varsigma(\xi) = (1+e^{-\xi})^{-1}$, and analogously for $z$
+(\code{map\_x\_to\_q\_cyl\_region} / \code{map\_q\_to\_x\_cyl\_region}).
+
+\subsection{Sensor repulsion penalty}
+
+Analogous to the electrode-gap penalty of Hyv\"onen et al., a smooth pairwise repulsion term can
+be added to prevent sensor clustering:
+\begin{equation}
+  \Phi_{\mathrm{rep}}(\bm{s})
+  \;=\;
+  \frac{1}{2} \sum_{i \neq j} \frac{1}{|\bm{x}_i - \bm{x}_j|^2 + \epsilon},
+  \qquad
+  \frac{\partial \Phi_{\mathrm{rep}}}{\partial \bm{x}_i}
+  \;=\;
+  -2 \sum_{j \neq i} \frac{\bm{x}_i - \bm{x}_j}{\big(|\bm{x}_i - \bm{x}_j|^2 + \epsilon\big)^2},
+\end{equation}
+with a small $\epsilon > 0$ for smoothness (\code{repulsion\_cost},
+\code{repulsion\_grad\_cartesian}). The total objective is
+$\Phi = \Phi_{\mathrm{OED}} + \alpha\, \Phi_{\mathrm{rep}}$ with a manually chosen weight
+$\alpha \geq 0$.
+
+\section{Practical choices of the noise and prior covariances}
+\label{sec:practical}
+
+The script uses white (uncorrelated) covariances,
+\begin{equation}
+  \Gnoise = \beta\, I, \qquad \Gprior = \alpha_{\mathrm{pr}}\, I,
+\end{equation}
+scaled as follows:
+\begin{itemize}
+  \item The noise standard deviation is tied to the magnitude of the simulated data,
+        $\sqrt{\beta} = \max_{j,m,l} |B_{j,m}^{(l)}| \,/\, 10$.
+  \item The prior variance is set relative to the largest eigenvalue of $J_0^\T J_0$ (the
+        Jacobian at the initial configuration),
+        \begin{equation}
+          \alpha_{\mathrm{pr}} \;=\; c\, \frac{\beta}{\lambda_{\max}(J_0^\T J_0)},
+          \qquad c = 50 .
+        \end{equation}
+        The ratio $\alpha_{\mathrm{pr}}/\beta$ controls how many eigenmodes of the problem are
+        \emph{data-dominated}: the number of eigenvalues $\lambda_i$ of $J_0^\T J_0$ with
+        $\lambda_i\, \alpha_{\mathrm{pr}} / \beta > 1$ counts the modes for which the
+        (linearized) data constrain the posterior more strongly than the prior. If this count is
+        very small, the design criteria are dominated by the prior and become insensitive to the
+        sensor positions; if it is very large, the linearization around the prior mean may become
+        the limiting approximation.
+\end{itemize}
+
+\section{Summary of the algorithm}
+
+\begin{enumerate}
+  \item Build the FE model, fix electrodes, stimulation patterns, $\Gprior$, $\Gnoise$; draw an
+        initial sensor configuration $\bm{s}^{(0)}$.
+  \item At the current configuration: assemble $R_j(\bm{s})$, $\Gamma(\sigma_*; \bm{s})$; solve
+        the forward problems $S u^{(l)} = b^{(l)}$ and adjoint problems
+        $S \lambda_m = -\Gamma^\T e_m$; form the Jacobian $J$.
+  \item Form $H = J^\T \Gnoise^{-1} J + \Gprior^{-1}$, its Cholesky factor, and evaluate
+        $\Phi_{\mathrm{A}} = \tr(H^{-1})$ or $\Phi_{\mathrm{D}} = -\logdet H$.
+  \item Compute $\partial R_j / \partial p$ from \eqref{eq:dRdp}, the extra adjoint solves for
+        $\partial \lambda_m / \partial p$, and assemble $\partial J / \partial p$ from
+        \eqref{eq:dJ}; contract with $W_{\mathrm{A}}$ or $W_{\mathrm{D}}$ as in
+        \eqref{eq:gradA}--\eqref{eq:gradD}; transform the gradient to the optimization
+        coordinates via \eqref{eq:chainrule}.
+  \item Feed cost and gradient to the constrained optimizer (\code{fmincon}, interior-point,
+        L-BFGS); iterate until convergence.
+\end{enumerate}
+
+\section{Case study: sensors confined to a circle at fixed height}
+\label{sec:case-study}
+
+This section documents a numerical case study, implemented in the sibling script
+\code{example\_anomaly\_circle.m}, that specializes the theory above to the simplest
+non-trivial circle-constrained design: $M$ magnetometers on a circle of \emph{fixed} radius
+$r_m \equiv r_s$ and \emph{fixed} height $z_m \equiv z_s$ (half the tank height), so that only the
+azimuths $\theta_m$ are free. Three-axis MDEIT is used throughout, $J = [J_x;J_y;J_z]$, and the
+cylindrical chain rule \eqref{eq:chainrule} collapses to the one-dimensional form
+\begin{equation}
+\label{eq:chainrule1d}
+  \frac{\partial \Phi}{\partial \theta_m}
+  \;=\;
+  -r_s \sin\theta_m\, \frac{\partial \Phi}{\partial x_m}
+  \;+\;
+  r_s \cos\theta_m\, \frac{\partial \Phi}{\partial y_m} ,
+\end{equation}
+evaluated at the \emph{current} $\theta_m$ at every iterate (cf.\ the remark in
+\S\ref{sec:practical} above about the analogous $(r,\theta)$ dependence).
+
+\subsection{Setup: ROI-informative prior and target anomaly}
+
+A single conductive spherical anomaly (radius $R/3$, conductivity $5\times$ background) is placed
+off-centre at half height, at $c_0 = (R/2,\,0,\,H/2)$, where $R,H$ are the tank radius and height.
+The prior is informative about \emph{where} the anomaly may be but not its value, following the
+``Case 1'' prior of Hyv\"onen et al.:
+\begin{equation}
+\label{eq:roiprior}
+  (\Gprior)_{kk} \;=\;
+  \begin{cases}
+    \sigma_{\mathrm{roi}}^2, & \operatorname{centroid}(T_k) \in \mathcal{R}, \\[2pt]
+    \sigma_{\mathrm{bg}}^2, & \text{otherwise},
+  \end{cases}
+  \qquad
+  \mathcal{R} \;=\; \{\, k : |\operatorname{centroid}(T_k) - c_0| \le \rho \,\},
+\end{equation}
+with $\rho$ a multiple (\code{roi\_radius\_factor}) of the anomaly radius. Sensors are confined to
+$r_m = r_s = 1.5R$, $z_m = z_s = H/2$ ($M = 8$), so \eqref{eq:chainrule1d} is the only
+coordinate transformation needed.
+
+\subsection{Noise calibration by target data-dominated rank}
+
+Rather than the fixed $\sqrt\beta = \max|B|/10$ rule of \S\ref{sec:practical}, the case study
+calibrates the noise level directly from the whitened-Jacobian spectrum at the even-spacing
+configuration $\bm s_0$. Let $J_0 = J(\sigma_*;\bm s_0)$ and let $s_1 \ge s_2 \ge \dots$ be the
+singular values of $J_0\, \Gprior^{1/2}$. Setting
+\begin{equation}
+\label{eq:noisecal}
+  \sqrt\beta \;=\; s_{d}
+\end{equation}
+for a target rank $d$ (\code{d\_target}) makes exactly $d$ modes data-dominated
+($s_i^2/\beta > 1$), placing the design problem in the regime where the sensor positions can
+actually matter: too much noise and the criteria are prior-dominated and design-insensitive; too
+little and every configuration already saturates them (cf.\ the discussion in
+\S\ref{sec:practical}). A companion diagnostic, the mean ROI energy of the leading right
+singular vectors $v_1,\dots,v_d$,
+\begin{equation}
+\label{eq:roienergy}
+  \mathcal{E}_{\mathcal R} \;=\; \frac{1}{d} \sum_{i=1}^{d} \sum_{k \in \mathcal R} (v_i)_k^2 ,
+\end{equation}
+measures how much of the data-dominated subspace actually overlaps the ROI, as opposed to the
+much larger and better-conditioned background.
+
+\subsection{Numerical results}
+
+With $\sigma_{\mathrm{bg}} = 0.005\,\sigma_0$, $\sigma_{\mathrm{roi}} = \sigma_0$
+($\sigma_0$ the background conductivity), $\rho$ equal to one anomaly radius, and $d = 100$
+($n_{\mathrm{el}} = 3425$, $n_{\mathrm{data}} = 384$), the even-spacing configuration already
+reduces the ROI posterior variance by about $30\%$ relative to the prior
+($\mathcal E_{\mathcal R} \approx 0.54$). Optimizing from this starting point (40 quasi-Newton
+iterations of \code{fminunc}, analytic gradient, \code{SpecifyObjectiveGradient}) gives:
+\begin{center}
+\begin{tabular}{lccc}
+\hline
+Criterion & $\Phi(\text{even})$ & $\Phi(\text{optimized})$ & Gain \\
+\hline
+A-optimality, $\tr(H^{-1})$ & $2.879 \times 10^{-1}$ & $2.747 \times 10^{-1}$ & $4.6\%$ trace reduction \\
+D-optimality, $-\logdet H$ & $-5.555 \times 10^{4}$ & $-5.557 \times 10^{4}$ & $17.6$ nats ($25.4$ bits) \\
+\hline
+\end{tabular}
+\end{center}
+Both criteria move the sensors toward the anomaly's azimuth, visibly more so for D-optimality. A
+multistart check (3 random initial azimuth sets) converges to the same A-optimal value in every
+run, and to within $0.03\%$ of the same D-optimal value, confirming that the even-spacing start is
+already close to the global optimum of this low-dimensional ($M=8$) design space.
+
+\subsection{Discussion: why the A-optimal gain stays modest}
+
+\begin{remark}
+Enlarging the data budget alone does not close the gap between the two criteria: repeating the
+optimization for $d \in \{60, 100, 150\}$ leaves the converged A-optimal trace reduction in the
+same $4$--$6\%$ range throughout, which rules out an insufficient-SNR explanation. Moving the
+anomaly closer to the tank wall (from $R/2$ to $0.6R$, all else unchanged) leaves the (3-iterate)
+A-optimal reduction almost unchanged ($2.7\% \to 4.4\%$) while nearly doubling the D-optimal
+information gain ($13.8 \to 24.8$ nats). The bottleneck is therefore geometric, not statistical.
+\end{remark}
+A-optimality is an \emph{average} of marginal posterior variances,
+$\Phi_{\mathrm{A}} = \sum_k (\Gpost)_{kk}$, and is comparatively insensitive to
+\emph{correlations} between sensor measurements: two sensors whose Jacobian rows are nearly
+collinear (typical for evenly spaced sensors seeing a common, roughly axisymmetric
+electrode/stimulation pattern) each still contribute their own, largely redundant, reduction to
+the trace. D-optimality, $\Phi_{\mathrm{D}} = -\logdet H = -\sum_i \log \lambda_i(H)$, behaves
+oppositely: an eigenvalue of $H$ associated with a direction seen by two collinear sensors stays
+pinned near its prior value, so \emph{removing} that redundancy by reallocating sensors is
+disproportionately rewarded. This is consistent with the classical design-of-experiments folklore
+that A-optimal designs tolerate point replication far better than D-optimal designs. Because the
+fixed-radius, fixed-height circle used here is itself a highly symmetric search domain, the
+even-spacing configuration is close to a ``replicated'' design in this sense: moving the sensors
+mainly re-shuffles \emph{which} directions are well resolved (a large D-optimal effect) rather
+than \emph{how much} variance is removed \emph{on average} (a small A-optimal effect). We have not
+proved this as a theorem; it is offered as the most parsimonious explanation consistent with all
+of the numerical evidence above. A natural follow-up, left to future work, is whether relaxing the
+height constraint --- letting $z_m$ vary together with $\theta_m$, still at fixed radius $r_s$ ---
+breaks enough of this residual symmetry to produce a more considerable A-optimal gain.
+
+\subsection{Follow-up: freeing the height $z_m$}
+\label{sec:case-study-thetaz}
+
+The question closing the previous subsection is answered here using a sibling script,
+\code{example\_anomaly\_circle\_thetaz.m}, identical to \code{example\_anomaly\_circle.m} in every
+other setting (anomaly, prior, noise calibration, $d=100$, 3-axis MDEIT, \code{fminunc}
+quasi-Newton with analytic gradient) except that each sensor now has \emph{two} free coordinates
+$(\theta_m, z_m)$ at the same fixed radius $r_s = 1.5R$. To keep the unconstrained solver
+\code{fminunc} usable with a single analytic gradient, $z_m$ is generated from an unconstrained
+$\eta_m$ through a sigmoid,
+\begin{equation}
+\label{eq:sigmoidmap}
+  z_m \;=\; z_{\min} + (z_{\max}-z_{\min})\,\mathrm{sigm}(\eta_m), \qquad
+  \mathrm{sigm}(y) = \frac{1}{1+e^{-y}},
+\end{equation}
+with $z_{\min}=0$, $z_{\max}=H$, so that $\eta_m = 0$ reproduces the previous fixed height
+$z_s = H/2$ exactly and $q_0 = (\theta_{\mathrm{even}}, \bm 0)$ is an identical-to-baseline start.
+The chain rule \eqref{eq:chainrule1d} for $\theta_m$ is unchanged; height contributes the new term
+\begin{equation}
+\label{eq:etachainrule}
+  \frac{\partial \Phi}{\partial \eta_m}
+  \;=\;
+  \frac{\partial \Phi}{\partial z_m}\,(z_{\max}-z_{\min})\,
+  \mathrm{sigm}(\eta_m)\bigl(1-\mathrm{sigm}(\eta_m)\bigr),
+\end{equation}
+reusing the $p=3$ (Cartesian $z$) component of $\partial\Phi/\partial \bm p_m$ that the fixed-height
+script already computed and discarded. Both halves of the resulting $2M$-length gradient were
+verified against central finite differences (rel.\ err.\ $10^{-6}$--$10^{-8}$, the same standard
+used throughout this study).
+
+\paragraph{Results.} Optimizing from $q_0$ (40 quasi-Newton iterations, as in the theta-only case)
+gives:
+\begin{center}
+\begin{tabular}{lccc}
+\hline
+Criterion & $\Phi(\text{even})$ & $\Phi(\text{optimized})$ & Gain \\
+\hline
+A-optimality, $\tr(H^{-1})$ & $2.879 \times 10^{-1}$ & $2.601 \times 10^{-1}$ & $9.7\%$ trace reduction \\
+D-optimality, $-\logdet H$ & $-5.555 \times 10^{4}$ & $-5.558 \times 10^{4}$ & $29.0$ nats ($41.9$ bits) \\
+\hline
+\end{tabular}
+\end{center}
+A longer single-start run (150 iterations) confirms both optima are fully converged (A-optimal
+gradient norm $7.6\times10^{-9}$; D-optimal run halts because it cannot decrease further along the
+search direction, gradient norm $2.4\times10^{-5}$) at essentially the same values ($9.7\%$,
+$29.0$ nats), so the 40-iteration figures above are not an artifact of premature stopping. A
+multistart check (4 random initial $(\theta,\eta)$ sets, 60 iterations each) finds every run within
+$0.3\%$ of the same A-optimal value and within $0.003\%$ of the same D-optimal value (best of the
+four: $9.9\%$ trace reduction, $30.3$ nats), confirming that --- as in the theta-only case --- the
+even-spacing start is close to the global optimum of this now $2M=16$-dimensional design space and
+that no qualitatively better configuration is being missed.
+
+\paragraph{Diagnosis.} Freeing $z_m$ roughly \emph{doubles} both gains relative to the
+theta-only results of \S\ref{sec:case-study} ($4.6\%\to 9.7$--$9.9\%$ for A-optimality, $17.6\to
+29$--$30$ nats for D-optimality), which is a real and reproducible effect, not noise: a non-trivial part of the
+modest A-optimal gain in \S\ref{sec:case-study} \emph{was} a symmetry artifact of the
+overly restrictive fixed-radius-fixed-height search domain, exactly as conjectured. However, the new
+A-optimal reduction ($\approx 10\%$) still falls short of being ``considerable'' by the same
+standard applied throughout this study ($\gtrsim 15$--$30\%$), so the restrictive-domain hypothesis
+is only \emph{partially} confirmed. Inspecting the optimized $(\theta_m,z_m)$ pairs shows why:
+sensors still cluster in azimuth toward the anomaly's side (as before), but in height they
+\emph{spread out} across a substantial fraction of the shell ($\mathrm{std}(z_m) \approx 0.36$--$0.40\,$m
+for A-optimality, $\approx 0.21\,$m for D-optimality, out of a $1.75\,$m range) rather than
+converging tightly onto the anomaly's own height $z=H/2$. This is the same
+decorrelation/de-clustering mechanism identified in \S\ref{sec:case-study} for azimuth, now acting
+in the height direction as well: spreading in $z$ reduces redundancy between sensor rows (helping
+both criteria, but disproportionately D-optimality) rather than concentrating averaged sensitivity
+near the anomaly (which is what would move the A-optimal trace substantially). In short: the
+fixed-height restriction explains \emph{part}, but evidently not \emph{all}, of the gap between the
+two criteria's gains --- the remainder is consistent with the more fundamental explanation from
+\S\ref{sec:case-study}, that A-optimality (an averaged criterion) is intrinsically more tolerant of
+replicated/correlated sensor information than D-optimality, independent of how many geometric
+degrees of freedom the design domain provides.
+
+\section{Case study: human thorax, sensors on a fixed circle at half height}
+\label{sec:case-study-thorax}
+
+The two cylinder studies above used a rotationally symmetric conductor. This section repeats the
+azimuth-only design (\S\ref{sec:case-study}) on a markedly more complicated geometry: an
+adult-male thorax cross-section from the EIDORS \code{shape\_library}, extruded to a 3D slab of
+height $H=0.5$, with the two lungs as interior low-conductivity regions ($\sigma_{\mathrm{bg}}=1$,
+$\sigma_{\mathrm{lung}}=0.3$; this homogeneous-lung image is the OED linearization point / prior
+mean). Twelve CEM electrodes form one ring at half height; $M=16$ magnetometers lie on a circle of
+\emph{fixed} radius $R_0=1.5$ at $z_s=H/2$, only their azimuths $\theta_m$ free, so
+\eqref{eq:chainrule1d} is again the only coordinate transformation. The implementation is
+\code{human\_thorax\_theta.m}; it drives the shared, finite-difference-validated optimizer
+\code{optimize\_sensor\_configuration.m} with the theta coordinate maps, and the analytic
+$\partial\Phi/\partial\theta_m$ was re-verified against central finite differences (rel.\ err.\
+$10^{-9}$--$10^{-6}$) at both the even start and a random perturbed configuration, for A- and
+D-optimality.
+
+\paragraph{Prior, noise, baselines.} The diagonal ``Case~1'' prior \eqref{eq:roiprior} is used,
+with the suspected-anomaly centre $c_0=(0.1,0.1,H/2)$, $\sigma_{\mathrm{bg}}=0.005$ and
+$\sigma_{\mathrm{roi}}=1$. On the coarse thorax mesh ($n_{\mathrm{el}}=5955$) a factor-one ROI
+ball holds only $14$ elements, making the ROI-energy diagnostic \eqref{eq:roienergy}
+pathologically small ($\mathcal E_{\mathcal R}\approx0.11$); enlarging the ball to
+$\rho=2\times$ the anomaly radius restores a $129$-element ROI (comparable to the cylinder's
+$\sim\!100$) with $\mathcal E_{\mathcal R}\approx0.33$. The noise is calibrated by
+\eqref{eq:noisecal} with $d=100$ ($n_{\mathrm{data}}=576$), giving $\sqrt\beta\approx1.4\times
+10^{-6}$; at this level the even configuration already reduces the ROI posterior variance by about
+$26\%$ relative to the prior. Two baselines are compared against, both at $M=16$: (i) even
+azimuthal spacing (also the optimizer start), and (ii) a ``boundary'' configuration with sensors
+at a fixed standoff $\delta=0.05$ from the body along equiangular rays --- the thorax analogue of
+``as close to the conductor as allowed''.
+
+\paragraph{Results.} Optimizing from the even start (40 quasi-Newton iterations):
+\begin{center}
+\begin{tabular}{lccc}
+\hline
+Criterion & $\Phi(\text{even})$ & $\Phi(\text{optimized})$ & Gain vs.\ even \\
+\hline
+A-optimality, $\tr(H^{-1})$ & $9.5559\times10^{1}$ & $9.5415\times10^{1}$ & $0.15\%$ trace reduction \\
+D-optimality, $-\logdet H$ & $-6.20443\times10^{4}$ & $-6.20482\times10^{4}$ & $3.9$ nats ($5.6$ bits) \\
+\hline
+\end{tabular}
+\end{center}
+The A-optimal even start reaches ``Local minimum found''; a multistart check (three random initial
+azimuth sets) agrees to $\le\!0.003\%$ on the A-optimal value and to all printed digits on the
+D-optimal value, so these are genuine converged optima, not premature stops. Crucially, the
+``as close as allowed'' boundary configuration is \emph{far} better than any fixed-$R_0$ circle:
+$\Phi_{\mathrm A}=71.08$ (a further $25\%$ below the azimuth optimum) and
+$\Phi_{\mathrm D}=-6.312\times10^{4}$ (a further $1076$ nats), consistent with the $1/r^2$
+Biot--Savart decay --- proximity, not azimuth, is the dominant lever, and it is entirely
+unavailable at fixed $R_0$.
+
+\paragraph{Discussion: weaker, not stronger, than the cylinder.} The a~priori expectation was that
+the thorax, breaking rotational symmetry twice (non-circular boundary; off-centre ROI), would
+yield a \emph{larger} A-optimal azimuth gain than the cylinder's $4.6\%$. The opposite occurs
+($0.15\%$), and the reason is geometric and quantifiable. What the averaged A-optimal trace
+responds to is the azimuthal \emph{contrast} in the ring's sensitivity to the ROI, i.e.\ the spread
+of ROI-to-sensor distances around the circle. For the specified centre $c_0$ (radius
+$|c_0|\approx0.14$ from the axis) against $R_0=1.5$, that distance varies only by $\pm9.4\%$ around
+the ring; the cylinder's anomaly at $0.5R$ against a $1.5R$ ring varied by $\pm32.5\%$. The ROI
+here is in effect \emph{more central} relative to the sensor circle than the cylinder anomaly was,
+so the fixed-radius circle conserves the average sensitivity budget under azimuth moves even more
+nearly than in \S\ref{sec:case-study}. The body's non-circular boundary does not rescue this: with
+the sensors held far out at $R_0=1.5$, the anomaly signal $\delta B$ is governed by the
+sensor-to-ROI distance, not by the (strongly azimuth-dependent) sensor-to-surface standoff, so the
+boundary shape barely enters the ROI sensitivity. The optimized azimuths are nonetheless still
+weakly \emph{structured} in the expected direction --- for both criteria the number of sensors
+within $\pm45^\circ$ of the ROI azimuth ($45^\circ$) rises from $3$ to $5$, with sensors bunching
+on the ROI/near-body (north-east) side and thinning on the far side (A-optimality: $9$ of the $16$
+sensors end up in the $0$--$144^\circ$ arc; largest single-sensor move $\approx36^\circ$) --- by
+the same redundancy-reduction mechanism as before, and D-optimality again shows the larger
+relative effect. But on this near-central-ROI, far-ring design the resultant clustering is mild
+($|\!\sum e^{i\theta_m}|/M\approx0.17$) and the absolute gains are small for both criteria. The
+lesson carried to the radius-free study (Task~B) is that on the thorax the decisive degree of
+freedom is radial standoff, not azimuth: the boundary configuration's large advantage is entirely
+a proximity effect that only a free (or noise-traded) radius can access.
+
+\section*{Symbol--code correspondence}
+
+\begin{center}
+\begin{tabular}{ll}
+\hline
+Symbol / quantity & Code \\
+\hline
+$S(\sigma)$, eq.~\eqref{eq:schur} & \code{M(img,sigma)} \\
+$R_x,R_y,R_z$, eq.~\eqref{eq:Rdef} & \code{compute\_r\_matrices\_local} \\
+$\Gamma_d$, eq.~\eqref{eq:Gamma} & \code{compute\_gamma\_matrices\_local} (\code{img.Gamma1..3}) \\
+$J$ (adjoint + direct part) & \code{calc\_jacobian\_1axis\_direct\_fully\_vectorized\_local} \\
+$\lambda_m$ & \code{compute\_lambda\_x} / PCG solves inside the Jacobian routine \\
+$\partial R_j / \partial p$, eq.~\eqref{eq:dRdp} & \code{dRmkj\_dp}, \code{dRmkj\_xyz} \\
+$\partial \lambda_m / \partial p$ & \code{compute\_dlambda\_ds}, \code{compute\_dlambda\_xyz} \\
+$\partial J / \partial p$, eq.~\eqref{eq:dJ} & \code{compute\_dJ\_ds}, \code{compute\_dJ\_xyz}, \code{compute\_dJxyz\_xyz} \\
+$\Phi_{\mathrm{A}}$, $\Phi_{\mathrm{D}}$ & \code{compute\_cost\_function\_\{a,d\}\_opt(\_3\_axis)} \\
+$W_{\mathrm{A}}$, $W_{\mathrm{D}}$, eqs.~\eqref{eq:gradA}--\eqref{eq:gradD} &
+  \code{compute\_cost\_function\_gradient\_\{a,d\}\_opt\_optimized(\_3\_axis)} \\
+Chain rule, eq.~\eqref{eq:chainrule} & \code{dphidp\_to\_dphidq} \\
+$\Phi_{\mathrm{rep}}$ & \code{repulsion\_cost}, \code{repulsion\_grad\_cartesian} \\
+\hline
+\end{tabular}
+\end{center}
+
+\section*{Reference}
+
+N.~Hyv\"onen, A.~Sepp\"anen, S.~Staboulis,
+\emph{Optimizing electrode positions in electrical impedance tomography},
+SIAM Journal on Applied Mathematics 74(6), 1831--1851 (2014). arXiv:1404.7300.
+
+\end{document}

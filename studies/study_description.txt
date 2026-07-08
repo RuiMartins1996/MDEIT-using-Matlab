@@ -1,0 +1,19 @@
+condition_number_mdeit1_axis_xyz: 
+
+Compute the condition number of the Jacobian matrix for a cylindrical configuration with variable radius for sensor measurement axis x,y and z.  
+
+cross_validation:
+
+Implementation of leave-n-out cross validation and generalized cross validation
+
+l_curve:
+
+Implementation of the L-curve method
+
+kai_saline_tank_experiment:
+
+Implements the experiment on the saline tank in Kai's thesis
+
+reconstructions_for_several_regularization_parameters:
+
+Performs 2D 1-axis MDEIT and EIT reconstructions for a similar setting of Kai's tank experiment for multiple regularization parameters.

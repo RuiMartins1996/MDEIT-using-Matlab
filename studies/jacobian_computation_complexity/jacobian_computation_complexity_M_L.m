@@ -36,9 +36,9 @@ V0 = z0*I0/(l0^2); %(V)
 sigma0 = l0/z0; %(S/m)
 J0 = I0/(l0^2);
 
-model_parameters = create_default_3d_model_parameters(l0, z0, sigma0, I0);
+model_parameters = create_kai_3d_model_parameters(l0, z0, sigma0, I0);
 
-model_parameters.maxsz =  model_parameters.radius/5;
+model_parameters.maxsz =  model_parameters.radius/15;
 
 % A material defines the geometry of that material inside the domain, not
 % its properties, like conductivity.
@@ -52,7 +52,7 @@ meas = [0 3]; %for EIT, skip2 measurement protocol was used
 options = {};
 
 %% Assign the parameters for several models (should create utility functions for this)
-num_of_repetitions_eit = 15;
+num_of_repetitions_eit = 5;
 
 num_of_repetitions_mdeit = 5;
 
@@ -63,15 +63,19 @@ background_conductivity = 3.28e-1/sigma0;  %page 163 mentions a saline solution 
 % num_of_electrodes_per_ring_array = 4:16; %because of skip 2 pattern, we have to start at 4
 % num_of_rings_array = 1:6;
 
-num_of_electrodes_per_ring_array = [4:16]; 
-num_of_rings_array = 1:8;
+num_of_sensors = 4:2:80;
+
+num_of_electrodes_per_ring_array = ones(1,numel(num_of_sensors))*[8]; 
+num_of_rings_array = [2];
 
 % num_of_electrodes_per_ring_array = [4]; 
 % num_of_rings_array = [1,2,3,4];
 
 [E, R] = ndgrid(num_of_electrodes_per_ring_array, num_of_rings_array);
 combinations = [E(:)'; R(:)'];
-num_of_sensors = combinations(1,:).*combinations(2,:);
+
+% num_of_sensors = combinations(1,:).*combinations(2,:);
+
 combinations = [combinations;num_of_sensors];
 
 % for some reason, the following combinations make netgen stuck, so avoid them 
@@ -108,14 +112,14 @@ end
 
 %% A small plot
 
-figure('Position',[100,100,1000,300])
-for n = 1:5
-    subplot(1,5,n)
-    mdl = fmdls_all{8*n};
-    show_fem_transparent_edges(mdl);
-    plot_sensors(mdl)
-    box on;
-end
+% figure('Position',[100,100,1000,300])
+% for n = 1:5
+%     subplot(1,5,n)
+%     mdl = fmdls_all{mod(8*n,numel(fmdls_all))};
+%     show_fem_transparent_edges(mdl);
+%     plot_sensors(mdl)
+%     box on;
+% end
 %% 
 
 times_eit = zeros(numel(model_parameters_array),1);
@@ -324,8 +328,8 @@ hold off
 msg = strcat('$ R^2 = ',num2str(R2),'$');
 legend('$1$-axis MDEIT',msg,'interpreter','latex','location','southeast');
 
-set(gca,'YScale','log');
-set(gca,'XScale','log');
+% set(gca,'YScale','log');
+% set(gca,'XScale','log');
 
 xlabel('$M \times L$','Interpreter','latex');
 ylabel('$t(s)$','Interpreter','latex')

@@ -1,0 +1,249 @@
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+
+\newcommand{\bB}{\mathbf{B}}
+\newcommand{\bJ}{\mathbf{J}}
+\newcommand{\bE}{\mathbf{E}}
+\newcommand{\br}{\mathbf{r}}
+\newcommand{\bg}{\mathbf{g}}
+
+\title{Combined EIT and MDEIT Image Reconstruction:\\ Theory and Numerical Experiments}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note documents the theory and numerical experiments implemented in the \texttt{studies/combined\_eit\_mdeit} folder, which explores conductivity image reconstruction from a joint dataset combining Electrical Impedance Tomography (EIT) boundary--voltage measurements with Magnetic Detection Electrical Impedance Tomography (MDEIT) external magnetic--field measurements. It summarizes (i) the forward models for both modalities, (ii) how their sensitivity (Jacobian) matrices are derived, (iii) the regularized inversion scheme used to combine both data types, and (iv) the numerical experiments performed \textemdash{} a rank/conditioning sweep over sensor--array geometries, and a difference--imaging reconstruction test at several noise levels.
+\end{abstract}
+
+\tableofcontents
+
+\section{Motivation}
+
+EIT reconstructs the internal conductivity distribution of a body from voltages measured at boundary electrodes while known currents are injected between other electrode pairs. It is cheap and portable, but the sensitivity of boundary voltage to conductivity changes deep inside the domain is weak and dominated by the region close to the electrodes, and reconstructions are sensitive to electrode/contact--impedance modelling errors.
+
+MDEIT drives the same injected currents but instead measures the (very weak) magnetic field they produce \emph{outside} the body, using magnetometers (e.g. OPMs) placed around it. Because the Biot--Savart integral weights contributions from the whole current-carrying volume rather than only the boundary, MDEIT sensitivity to deep conductivity perturbations does not fall off as sharply, and the measurement is unaffected by electrode contact impedance. Its drawback is a much smaller signal amplitude and, because both current injection and pickup coils are external to the domain, a peculiar null-space structure of its own.
+
+The code in this folder investigates whether \emph{jointly} inverting EIT and MDEIT data (as a single augmented least--squares problem) is beneficial: whether the combined Jacobian is better conditioned / higher rank than either modality alone, and whether the combined reconstruction is qualitatively better across a range of signal-to-noise ratios (SNRs).
+
+\section{Theory}
+
+\subsection{Nondimensionalization and geometry}
+
+All quantities are nondimensionalized using characteristic scales built from the tank radius $l_0$, the electrode contact impedance $z_0$, and the injected current amplitude $I_0$ (values taken from a saline-tank complete-electrode-model (CEM) experiment: $z_0 = 5.8\times10^{-3}\ \Omega\,\mathrm{m}^2$, $l_0 = 40\ \mathrm{mm}$, $I_0 = 2.4\ \mathrm{mA}$):
+\begin{equation}
+V_0 = \frac{z_0 I_0}{l_0^2}, \qquad
+\sigma_0 = \frac{l_0}{z_0}, \qquad
+J_0 = \frac{I_0}{l_0^2}, \qquad
+H_0 = \frac{I_0}{l_0}, \qquad
+B_0 = \frac{\mu_0 I_0}{l_0},
+\end{equation}
+which are the characteristic voltage, conductivity, current density, magnetic-field-intensity and magnetic-flux-density scales, respectively. All conductivities, positions, voltages and fields used in the code are expressed relative to these scales.
+
+The forward model is a finite-element (FEM) discretization of a cylindrical tank (default height $120$~mm, radius $40$~mm) with electrodes arranged in $N_\text{ring}$ rings of $N_\text{elec}$ electrodes each (in the reconstruction experiment, $4$ rings $\times$ $8$ electrodes $=32$ electrodes) mounted on the cylindrical wall, each with a finite contact impedance $z_0$ (complete electrode model). An equal number of magnetometers (``sensors'') is placed on rings concentric with, and outside, the tank, at radius $R_\text{sens} = 3.5\,r_\text{tank}$; each sensor carries a local orthonormal triad of measurement axes (by default the global $x,y,z$ axes) along which the magnetic field can be projected.
+
+\subsection{EIT forward and inverse sensitivity}
+
+For a fixed injection pattern, the electric potential $u$ inside the domain and on the electrodes solves the CEM boundary-value problem
+\begin{equation}
+\nabla\cdot(\sigma\nabla u) = 0 \ \text{in } \Omega, \qquad
+\text{electrode/contact-impedance boundary conditions on } \partial\Omega,
+\end{equation}
+discretized with linear FEM elements (\texttt{system\_mat\_1st\_order}), giving the linear system $A(\sigma)\,[u;U] = [0;I]$, where $U$ are the electrode potentials and $I$ the injected currents. The EIT Jacobian $J_\text{eit} = \partial V_\text{meas}/\partial\sigma$ is obtained with the standard EIDORS \texttt{calc\_jacobian} routine, i.e. the adjoint/reciprocity method: for each measurement pair the sensitivity of the element $e$ is $-\int_{\Omega_e}\nabla u\cdot\nabla u_\text{adj}\,dV$, where $u_\text{adj}$ is the potential obtained by driving the measurement electrodes as if they were current sources (Geselowitz's reciprocity theorem).
+
+\subsection{MDEIT forward problem}
+
+Once $u$ is known, the current density is $\bJ = \sigma\bE = -\sigma\nabla u$. Biot--Savart's law then gives the magnetic flux density at an external point $\br_m$ (sensor $m$):
+\begin{equation}
+\bB(\br_m) = \frac{\mu_0}{4\pi}\int_\Omega \bJ(\br)\times\frac{\br_m-\br}{|\br_m-\br|^3}\,dV
+= \frac{\mu_0}{4\pi}\int_\Omega \frac{\br_m-\br}{|\br_m-\br|^3}\times\sigma(\br)\nabla u(\br)\,dV. \label{eq:biotsavart}
+\end{equation}
+The code evaluates \eqref{eq:biotsavart} element-by-element on the same FEM mesh used for the EIT forward problem. For each element $e$ it precomputes, by numerical quadrature over the element (Newton--Cotes rules of orders 0/2/6 in 3D, or the TOMS-706 rule in 2D), the geometric kernel
+\begin{equation}
+\mathbf{R}_e^m = \int_{\Omega_e}\frac{\br_m-\br}{|\br_m-\br|^3}\,dV, \qquad m = 1,\dots,N_\text{sens},
+\end{equation}
+stored as three sensor-by-element matrices $R_x,R_y,R_z$ (\texttt{compute\_r\_matrices.m}), together with element-wise gradient operators $G_x,G_y,G_z$ that map the nodal voltage vector to the (constant, per tetrahedron) gradient components (\texttt{compute\_geometry\_matrices.m}). With $\Sigma=\mathrm{diag}(\sigma_e)$ the piecewise-constant conductivity, the three Cartesian field components are assembled as
+\begin{equation}
+C_x = -R_z\,\Sigma\,G_y + R_y\,\Sigma\,G_z,\quad
+C_y = -R_x\,\Sigma\,G_z + R_z\,\Sigma\,G_x,\quad
+C_z = -R_y\,\Sigma\,G_x + R_x\,\Sigma\,G_y,
+\end{equation}
+i.e.\ $C=(R\times\Sigma\, G) \, u$ discretizes the cross product in \eqref{eq:biotsavart}. Each sensor then reads out the projection of $(C_x,C_y,C_z)$ onto its own measurement axis $\bg^m$ through the operator $\Gamma_\alpha = \frac{\mu_0}{4\pi}\sum_\beta g_{\alpha\beta}\,C_\beta$ (\texttt{compute\_gamma\_matrices.m}), so that the forward solve is simply
+\begin{equation}
+B_x = \Gamma_1 u,\qquad B_y=\Gamma_2 u, \qquad B_z = \Gamma_3 u \qquad (\texttt{fwd\_solve\_mdeit.m}).
+\end{equation}
+Two reconstruction modes are used: \texttt{mdeit1} keeps a single measurement axis (e.g. only $B_z$), while \texttt{mdeit3} stacks all three components $[B_x;B_y;B_z]$ as the data vector, tripling the number of MDEIT measurements per sensor.
+
+\subsection{MDEIT Jacobian}
+
+Because $\sigma$ enters \eqref{eq:biotsavart} both explicitly (through the $\sigma\nabla u$ current density) and implicitly (because $u$ itself depends on $\sigma$ through the CEM problem), the sensitivity $\partial B/\partial\sigma_e$ has two contributions (\texttt{calc\_jacobian\_mdeit.m}):
+\begin{itemize}
+\item \textbf{Direct term.} Differentiating \eqref{eq:biotsavart} with $u$ held fixed gives, per element and sensor axis,
+\begin{equation}
+\left.\frac{\partial B}{\partial \sigma_e}\right|_\text{direct} = \frac{\mu_0}{4\pi}\,\bg\cdot\bigl(\mathbf{R}_e\times\nabla u|_e\bigr),
+\end{equation}
+computed directly from the precomputed $R$ and $G$ matrices (this is the \texttt{dfdp} term in the code).
+\item \textbf{Adjoint / reciprocity term.} The implicit dependence through $u(\sigma)$ is handled the same way as in standard EIT: an adjoint field $\boldsymbol\lambda^m$ is defined per sensor as the solution of the \emph{same} FEM system as the forward problem, but driven by a virtual right-hand side equal to $-\Gamma_m^{\!\top}$ (i.e.\ the sensor's pick-up pattern, playing the role of a fictitious current injection). This contribution is
+\begin{equation}
+\left.\frac{\partial B_m}{\partial\sigma_e}\right|_\text{adjoint} = |\Omega_e|\,\bigl(\nabla\lambda^m|_e\bigr)\cdot\bigl(\nabla u|_e\bigr),
+\end{equation}
+which is the exact MDEIT analogue of the EIT reciprocity sensitivity, and is the \texttt{dfdx} term in the code. Since one adjoint solve is required per sensor (not per measurement, as would be needed by a naive finite-difference Jacobian), the code factorizes the forward system matrix once per background conductivity (LDL$^\top$ factorization, \texttt{lhs\_eit\_full.m}) and re-uses that factorization for all sensor right-hand sides (\texttt{solve\_fact\_multiple\_rhs}), which is far cheaper than refactorizing per sensor or per element.
+\end{itemize}
+The total Jacobian is the sum of the two terms; for \texttt{mdeit3} the three single-axis Jacobians $J_x,J_y,J_z$ (one per measurement axis) are stacked into $J_\text{mdeit3} = [J_x;J_y;J_z]$.
+
+\subsection{Regularized inversion and combination of modalities}
+
+Reconstruction is done in \emph{difference} mode: a homogeneous background image and a perturbed (anomaly) image are both forward-solved, and the (noisy) difference of their measurements, $\delta d = d_\text{anomaly}-d_\text{background}$, is inverted for a linearized conductivity change $\delta\sigma$ using the corresponding Jacobian $J$ evaluated at the background conductivity:
+\begin{equation}
+\delta\sigma_\lambda = \arg\min_{\delta\sigma}\; \|J\,\delta\sigma - \delta d\|_2^2 + \lambda \|\delta\sigma\|_2^2 .
+\end{equation}
+Writing the (economy) SVD $J = U S V^\top$ with singular values $\sigma_i$, the zeroth-order Tikhonov / filtered-SVD solution is
+\begin{equation}
+\delta\sigma_\lambda = V\,\mathrm{diag}\!\Bigl(\frac{\sigma_i}{\sigma_i^2+\lambda}\Bigr)\,U^\top \delta d. \label{eq:tsvd}
+\end{equation}
+The regularization parameter $\lambda$ is chosen with the \textbf{L-curve method} (Hansen): defining the filter factors $f_i(\lambda)=\sigma_i^2/(\sigma_i^2+\lambda)$ and $\beta_i = (U^\top\delta d)_i$, the residual and solution (semi-)norms
+\begin{equation}
+\rho(\lambda)=\sum_i\bigl[(1-f_i(\lambda))\beta_i\bigr]^2, \qquad
+\eta(\lambda)=\sum_i\Bigl[\frac{f_i(\lambda)\beta_i}{\sigma_i}\Bigr]^2
+\end{equation}
+trace, in log--log scale, an ``L''-shaped curve as $\lambda$ varies; the corner (point of maximum curvature $\kappa(\lambda)$, computed analytically from $\rho,\eta$ and their $\lambda$-derivatives) is taken as the optimal trade-off between fitting the data and limiting the solution norm (\texttt{l\_curve\_method\_new.m}). A \textbf{generalized cross-validation} (GCV) alternative is also implemented (\texttt{generalized\_cross\_validation.m}), minimizing
+\begin{equation}
+V(\lambda) = \frac{\frac{1}{m}\sum_i\bigl[(1-\gamma_i(\lambda))(U^\top d)_i\bigr]^2}{\Bigl[\frac{1}{m}\sum_i(1-\gamma_i(\lambda))\Bigr]^2}, \qquad \gamma_i(\lambda)=\frac{\sigma_i^2}{\sigma_i^2+m\lambda},
+\end{equation}
+but in this study the L-curve was found to give more stable results and is used for the reported reconstructions.
+
+To combine both modalities, the two Jacobians and (noisy) residuals are stacked into a single augmented least-squares problem
+\begin{equation}
+J_\text{aug} = \begin{bmatrix}J_\text{eit}\\ \sqrt{\beta}\,J_\text{mdeit3}\end{bmatrix}, \qquad
+r_\text{aug} = \begin{bmatrix}\delta d_\text{eit}\\ \sqrt{\beta}\,\delta d_\text{mdeit3}\end{bmatrix}, \qquad \beta = \frac{V_0}{H_0},
+\end{equation}
+and inverted exactly as in \eqref{eq:tsvd}--with the same L-curve procedure applied to $J_\text{aug}, r_\text{aug}$. The weight $\beta=V_0/H_0$ rescales the (nondimensional) magnetic-field residual so that both blocks of $r_\text{aug}$ are of comparable magnitude/units before being combined in a single Euclidean norm; without it the EIT and MDEIT residuals, which have very different physical units and magnitudes, would not trade off sensibly against a single $\lambda$.
+
+\subsection{Noise propagation and significance maps}
+
+Because \eqref{eq:tsvd} is linear in the data, the effect of measurement noise on the reconstructed image can be propagated analytically rather than only sampled once. Given repeated noise realizations $n^{(k)}$ (matching the modality being tested \textemdash{} \texttt{white/pink/brown} synthetic noise scaled to a target SNR, or real OPM background-noise epochs), the code computes
+\begin{equation}
+\delta\sigma^{(k)} = V\,\mathrm{diag}\!\Bigl(\frac{1}{\sigma_i+\lambda/\sigma_i}\Bigr)U^\top n^{(k)},
+\end{equation}
+using the \emph{same} regularized inverse operator as the reconstruction, and takes the per-element sample standard deviation $\hat\sigma_\text{std}$ over $k=1,\dots,15$ repetitions (\texttt{noise\_correction.m}). Dividing the reconstructed $\delta\sigma_\lambda$ image element-wise by $\hat\sigma_\text{std}$ produces a noise-normalized (``z-score''-like) image that highlights conductivity changes that are large relative to the noise floor propagated through the same reconstruction operator, rather than the raw (and generally noisier-looking) amplitude image.
+
+\section{Numerical Experiments}
+
+\subsection{Rank and conditioning study}
+
+\texttt{rank\_analysis.m} sweeps the array geometry over $N_\text{ring}\in\{1,2,3,4\}$ rings and $N_\text{elec}\in\{4,\dots,8\}$ electrodes/sensors per ring, for a fixed spherical FEM tank model and a homogeneous background conductivity, and for every configuration computes the Jacobians $J_\text{eit}$, $J_{\text{mdeit-}x}$, $J_{\text{mdeit-}y}$, $J_{\text{mdeit-}z}$ (\texttt{mdeit1} on each axis separately), $J_\text{mdeit3}$ and the $\beta$-weighted augmented $J_\text{aug}=[J_\text{eit};\sqrt\beta J_\text{mdeit3}]$; the rank, singular values and condition number $\kappa = \sigma_\text{max}/\sigma_\text{min}$ of each are stored (\texttt{update\_data.m} incrementally accumulates results across runs) and plotted by \texttt{plots\_num\_measurements.m}.
+
+\paragraph{Rank vs.\ number of measurements (Fig.~\ref{fig:rank_meas}).} On log--log axes, the rank of every modality grows approximately linearly with the number of measurements, i.e.\ a power-law fit $\text{rank}\propto N_\text{meas}^{\,m}$ gives $m\approx 1$ for all of them (EIT: $m=1.035$, MDEIT-$z$: $m=1.038$, MDEIT-3: $m=1.032$, EIT+MDEIT: $m=0.949$): none of the modalities saturates to a fixed maximum rank within the tested range, and the augmented system has a slightly \emph{lower} growth exponent than either modality alone.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/rank_vs_num_of_measurements.png}
+\caption{Jacobian rank vs.\ number of measurements, for EIT, MDEIT (single axis and 3-axis) and the combined EIT+MDEIT system, across all swept ring/electrode configurations.}
+\label{fig:rank_meas}
+\end{figure}
+
+\paragraph{Rank as a percentage of measurements (Fig.~\ref{fig:rank_pct}).} Expressing the rank as a fraction $\rho=\text{rank}/N_\text{meas}$ shows that MDEIT-$z$ and MDEIT-3 typically retain $70$--$95\%$ of their measurements as independent (rank-contributing) directions, versus only $\sim20$--$45\%$ for EIT, i.e.\ MDEIT measurements are markedly less redundant than EIT measurements for this geometry. The combined system sits in between, and its rank fraction drops toward $\sim35\%$ at the largest arrays tested, i.e.\ the benefit of adding EIT data to MDEIT data (in terms of \emph{new independent} information) diminishes as the array grows.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/percentage_vs_num_of_measurements.png}
+\caption{Rank as a percentage of the number of measurements, $\rho=\text{rank}/N_\text{meas}$.}
+\label{fig:rank_pct}
+\end{figure}
+
+\paragraph{Condition number (Fig.~\ref{fig:cond}).} All single-modality Jacobians (EIT and the three MDEIT variants) have broadly comparable condition numbers across the swept geometries (same order of magnitude at each measurement count). The \emph{combined} EIT+MDEIT Jacobian, however, is dramatically worse conditioned \textemdash{} several orders of magnitude larger $\kappa$ (up to $\sim10^{12}$ at the largest arrays, versus $\sim10^{6}$--$10^{7}$ for the individual modalities). This is the key numerical price of combining the two data types: simply stacking $J_\text{eit}$ and $\sqrt\beta J_\text{mdeit3}$ (even after the $\beta=V_0/H_0$ unit-rescaling) produces a much more ill-posed problem, which is why the regularization parameter has to be re-optimized (via the L-curve) specifically for the augmented system rather than re-used from either sub-problem.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/condition_number_vs_num_of_measurements.png}
+\caption{Jacobian condition number $\kappa=\sigma_\text{max}/\sigma_\text{min}$ vs.\ number of measurements.}
+\label{fig:cond}
+\end{figure}
+
+\paragraph{Rank vs.\ number of sensors/electrodes (Figs.~\ref{fig:rank_sens}--\ref{fig:rank_diff}).} Plotting rank against the number of sensors/electrodes directly (rather than the number of measurements, which also grows with the number of injection patterns) shows the same near-linear power-law behaviour ($m\approx1$ for all modalities) and confirms that MDEIT-3 and the combined system track each other closely and both dominate plain EIT and single-axis MDEIT-$z$ in absolute rank. The rank \emph{difference} between the combined system and MDEIT-3 alone (Fig.~\ref{fig:rank_diff}, top panel) grows with array size, from essentially $0$ at small arrays to $\sim350$ at the largest one tested, indicating that EIT measurements do contribute some independent information beyond MDEIT-3 as the sensor count increases, even though, per the rank-fraction result above, the majority of the combined system's rank is already supplied by MDEIT alone.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/rank_vs_num_of_sensors.png}
+\caption{Jacobian rank vs.\ number of sensors/electrodes per configuration.}
+\label{fig:rank_sens}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.75\textwidth]{figures/rank_vs_num_of_sensors_diff.png}
+\caption{Top: rank difference between the combined EIT+MDEIT system and MDEIT-3 alone, vs.\ number of sensors/electrodes. Bottom: absolute ranks of all modalities for reference.}
+\label{fig:rank_diff}
+\end{figure}
+
+\subsection{Reconstruction study}
+
+\texttt{main.m} builds a $4$-ring $\times$ $8$-electrode ($32$-channel) cylindrical tank model, with a spherical conductive anomaly of contrast $0.9\times$ the background conductivity, using a skip-2 current-injection and skip-2 EIT measurement protocol. Two anomaly positions are tested: centered on the tank axis (\texttt{center}) and offset toward the tank wall (\texttt{side}, at radial position $0.5\,r_\text{tank}$). For each position, white-noise data is generated at three target SNRs ($100$, $20$ and $1$~dB) for both EIT and MDEIT-3, and four reconstructions are compared: EIT alone, MDEIT-3 alone, the combined EIT+MDEIT (with the $\beta=V_0/H_0$ weighting), and the ground truth. Each reconstruction is regularized independently via the L-curve method described above, and the noise-normalized image (\S\,\ref{eq:tsvd} + \texttt{noise\_correction.m}) is also produced. Results are stored as \texttt{center\_snr\_\{1,20,100\}} and \texttt{side\_snr\_\{1,20,100\}} figures, each showing (top row) the raw reconstructed conductivity perturbation on a cross-sectional FEM mesh view, (middle row) an interpolated top-down slice, and (bottom row) the noise-normalized image, side by side for EIT / MDEIT / Combined / Ground Truth.
+
+\paragraph{High SNR (100 dB, Fig.~\ref{fig:snr100}).} At this near-noiseless level, all three reconstruction strategies localize the anomaly cleanly and with comparable contrast to the ground truth, for both the centered and off-center anomaly positions; differences between EIT, MDEIT and the combined result are minor.
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}{0.48\textwidth}
+\includegraphics[width=\textwidth]{figures/center_snr_100.png}
+\caption{Centered anomaly}
+\end{subfigure}
+\hfill
+\begin{subfigure}{0.48\textwidth}
+\includegraphics[width=\textwidth]{figures/side_snr_100.png}
+\caption{Off-center anomaly}
+\end{subfigure}
+\caption{Reconstructions at SNR $=100$~dB. Columns: EIT, MDEIT, combined EIT+MDEIT, ground truth. Rows: FEM cross-section, interpolated top slice, noise-normalized cross-section.}
+\label{fig:snr100}
+\end{figure}
+
+\paragraph{Moderate SNR (20 dB, Fig.~\ref{fig:snr20}).} Noise-induced artifacts (small scattered high/low-conductivity speckles, concentrated near the electrodes) start to appear, more visibly for EIT and MDEIT taken separately than for the combined reconstruction, which in both anomaly positions still localizes the perturbation with contrast close to the individual best-performing modality while showing comparatively fewer spurious speckles.
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}{0.48\textwidth}
+\includegraphics[width=\textwidth]{figures/center_snr_20.png}
+\caption{Centered anomaly}
+\end{subfigure}
+\hfill
+\begin{subfigure}{0.48\textwidth}
+\includegraphics[width=\textwidth]{figures/side_snr_20.png}
+\caption{Off-center anomaly}
+\end{subfigure}
+\caption{Reconstructions at SNR $=20$~dB.}
+\label{fig:snr20}
+\end{figure}
+
+\paragraph{Low SNR (1 dB, Fig.~\ref{fig:snr1}).} At this heavily noise-dominated level, EIT alone develops a strong artifact correlated with the electrode layout (a banded/striped pattern of alternating high and low conductivity following the electrode ring, rather than the anomaly shape), a well-known failure mode of EIT reconstruction when the signal-to-noise ratio is insufficient for the chosen regularization level. MDEIT alone degrades more gracefully: the reconstructed blob is blurred and broadened relative to the ground truth, but remains roughly centered on the true anomaly location without electrode-correlated banding. The combined EIT+MDEIT reconstruction sits in between the two: it avoids the worst of the electrode-banding artifact seen in pure EIT and keeps the anomaly correctly localized, but it also shows more speckle noise than MDEIT alone, consistent with the much higher condition number found for the augmented Jacobian in \S\,3.1 \textemdash{} at very low SNR the noisier EIT data block can partially contaminate the joint solution unless $\lambda$ and $\beta$ are tuned specifically for that noise level.
+
+\begin{figure}[htbp]
+\centering
+\begin{subfigure}{0.48\textwidth}
+\includegraphics[width=\textwidth]{figures/center_snr_1.png}
+\caption{Centered anomaly}
+\end{subfigure}
+\hfill
+\begin{subfigure}{0.48\textwidth}
+\includegraphics[width=\textwidth]{figures/side_snr_1.png}
+\caption{Off-center anomaly}
+\end{subfigure}
+\caption{Reconstructions at SNR $=1$~dB.}
+\label{fig:snr1}
+\end{figure}
+
+\section{Discussion and Conclusion}
+
+The rank/conditioning sweep and the reconstruction experiments point to a consistent picture. MDEIT measurements are individually less redundant (higher rank fraction) than EIT measurements taken with the same array, and MDEIT reconstructions degrade more gracefully under noise, without the electrode-correlated banding artifact that dominates EIT reconstructions at very low SNR. Naively stacking EIT and MDEIT data into one augmented least-squares problem does add some independent information (the rank of the combined Jacobian exceeds that of MDEIT-3 alone by a margin that grows with array size), but it also makes the problem substantially more ill-conditioned than either sub-problem on its own, even after rescaling the two residual blocks to comparable physical units via $\beta = V_0/H_0$. In the reconstruction test, this trade-off is favourable at high and moderate SNR \textemdash{} the combined reconstruction is at least as good as the better of the two individual modalities \textemdash{} but at very low SNR the combined system inherits some of EIT's noise sensitivity, and a plain MDEIT-only reconstruction can look qualitatively cleaner than the combined one.
+
+These observations are based on the qualitative, visual comparison of the reconstructed images produced by \texttt{main.m}; the code does not currently compute a quantitative reconstruction-error metric (e.g.\ relative RMSE or a localization-error norm against the known ground truth), which would be a natural extension to turn the visual trends reported here into a quantitative statement, together with repeating the SNR sweep over multiple random anomaly positions/sizes and noise seeds to obtain error bars.
+
+\end{document}

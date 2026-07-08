@@ -29,7 +29,7 @@ data_folder = strcat(script_folder ,'\data');
 clc;
 rng(1)
 
-file_name = strcat(script_folder,'/data/data.mat');
+file_name = strcat(script_folder,'/data/data_unfactorized_factorized.mat');
 
 
 %% Define the characteristic scales in SI units
@@ -66,9 +66,9 @@ inj = [0 3]; %skip 2 pattern (pg 172)
 meas = [0 3]; %for EIT, skip2 measurement protocol was used
 options = {};
 
-min_maxsz = model_parameters.radius;
-max_maxsz = model_parameters.radius/10;
-% 
+% min_maxsz = model_parameters.radius;
+% max_maxsz = model_parameters.radius/10;
+
 % min_maxsz = model_parameters.radius/10;
 % max_maxsz = model_parameters.radius/15;
 
@@ -81,8 +81,17 @@ max_maxsz = model_parameters.radius/10;
 % min_maxsz = model_parameters.radius/25;
 % max_maxsz = model_parameters.radius/30;
 
+% min_maxsz = model_parameters.radius/35;
+% max_maxsz = model_parameters.radius/40;
 
-n_steps = 5;
+% Iteration 5 of this run is not worth it, has only 2229153 eleemnts, but
+% last data point had 2153817 . Use below
+
+min_maxsz = model_parameters.radius/50;
+max_maxsz = model_parameters.radius/55;
+n_steps = 1;
+
+% n_steps = 5;
 
 %% Sweep model_parameters over multiple cylindrical radius
 model_parameters_array = ...
@@ -101,23 +110,18 @@ for n = 1:numel(model_parameters_array)
     fmdls_all{n} = fmdls{1};
 end
 
-%% A small plot
-
-figure('Position',[100,100,1000,300])
-for n = 1:5
-    subplot(1,5,n)
-    mdl = fmdls_all{n};
-    show_fem_transparent_edges(mdl);
-    plot_sensors(mdl)
-    box on;
-end
-
 %% 
 
 times_eit = zeros(numel(model_parameters_array),1);
 times_mdeit = zeros(numel(model_parameters_array),1);
+times_mdeit_factorized = zeros(numel(model_parameters_array),1);
+times_mdeit_factorized_fwd = zeros(numel(model_parameters_array),1);
+
 std_eit = zeros(numel(model_parameters_array),1);
 std_mdeit = zeros(numel(model_parameters_array),1);
+std_mdeit_factorized = zeros(numel(model_parameters_array),1);
+std_mdeit_factorized_fwd = zeros(numel(model_parameters_array),1);
+
 
 time_forward_solve_eit = zeros(numel(model_parameters_array),1);
 std_forward_solve_eit = zeros(numel(model_parameters_array),1);
@@ -133,11 +137,11 @@ if isfile(file_name)
 else
     % Initialize empty table if it doesn't exist yet
     T = table( ...
-        [],[],[],[],[],[],[],[],[],[],[],[],...
+        [],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],...
         'VariableNames', { ...
         'num_sensors','num_electrodes_per_ring','num_rings', ...
-        'times_mdeit','times_eit', ...
-        'std_mdeit','std_eit', ...
+        'times_mdeit','times_mdeit_fact','times_mdeit_fact_fwd','times_eit', ...
+        'std_mdeit','std_mdeit_fact','std_mdeit_fact_fwd','std_eit', ...
         'time_forward_solve_eit','std_forward_solve_eit', ...
         'time_forward_solve_mdeit','std_forward_solve_mdeit', ...
         'n_elems'} ...
@@ -171,10 +175,14 @@ for n = 1:numel(model_parameters_array)
 
 
     if not(skip_iteration)
+        fprintf('Working on iteration %i\n',n);
         n_elem_vector(n) = size(fmdl.elems,1);
 
-        imgh = mk_image_mdeit(fmdl,background_conductivity);
+        fprintf('# elements: %i\n',n_elem_vector(n));
 
+
+        imgh = mk_image_mdeit(fmdl,background_conductivity);
+         
         % FORWARD SOLVE: Compute mean execution time and standard deviation
         [time_forward_solve_mdeit(n),std_forward_solve_mdeit(n)] = ...
             compute_execution_time(@fwd_solve_mdeit, num_of_repetitions_mdeit, imgh);
@@ -183,25 +191,48 @@ for n = 1:numel(model_parameters_array)
             compute_execution_time(@fwd_solve, num_of_repetitions_eit, imgh);
 
         % JACOBIAN SOLVE: Compute mean execution time and standard deviation
-        [times_eit(n),std_eit(n)] = compute_execution_time(@calc_jacobian, num_of_repetitions_eit, imgh);
 
-        lambdatimesdAdp = @(lambda) computeLambdaTimesDaDp(imgh,lambda);
         A = @(sigma) M(imgh,sigma);
 
+        lambdatimesdAdp = [];
+        s_mat = system_mat_1st_order(imgh);
+        E = s_mat.E;
+        tic
+        F = factorise_symmetric(E);
+        fprintf('Factorization time: %2.2f\n',toc);
+        
+        % Factorization precomputed
+        [times_mdeit_factorized(n),std_mdeit_factorized(n)] = ...
+            compute_execution_time(@ calc_jacobian_mdeit, num_of_repetitions_mdeit, imgh,imgh.elem_data,lambdatimesdAdp,F,'mdeit1',3);
+        
+        % EIT
+        [times_eit(n),std_eit(n)] = compute_execution_time(@calc_jacobian, num_of_repetitions_eit, imgh);
+
+        % No shennanigans
         [times_mdeit(n),std_mdeit(n)] = ...
             compute_execution_time(@ calc_jacobian_mdeit, num_of_repetitions_mdeit, imgh,imgh.elem_data,lambdatimesdAdp,A,'mdeit1',3);
+        
+        u = fwd_solve(imgh);
+        u = u.volt;
+        u_struct.Gx_times_u = imgh.fwd_model.G.Gx*u;
+        u_struct.Gy_times_u = imgh.fwd_model.G.Gy*u;
+        u_struct.Gz_times_u = imgh.fwd_model.G.Gz*u; 
+        
+        % Factorization and solution gradients precomputed
+        [times_mdeit_factorized_fwd(n),std_mdeit_factorized_fwd(n)] = ...
+            compute_execution_time(@ calc_jacobian_mdeit, num_of_repetitions_mdeit, imgh,imgh.elem_data,lambdatimesdAdp,F,'mdeit1',3,u_struct);
 
         new_row = table( ...
             model_parameters.numOfSensors,model_parameters.numOfElectrodesPerRing,model_parameters.numOfRings,...
-            times_mdeit(n), times_eit(n), ...
-            std_mdeit(n), std_eit(n), ...
+            times_mdeit(n), times_mdeit_factorized(n), times_mdeit_factorized_fwd(n), times_eit(n), ...
+            std_mdeit(n),std_mdeit_factorized(n),std_mdeit_factorized_fwd(n), std_eit(n), ...
             time_forward_solve_eit(n), std_forward_solve_eit(n), ...
             time_forward_solve_mdeit(n), std_forward_solve_mdeit(n), ...
             n_elem_vector(n),...
             'VariableNames', { ...
             'num_sensors','num_electrodes_per_ring','num_rings', ...
-            'times_mdeit','times_eit', ...
-            'std_mdeit','std_eit', ...
+            'times_mdeit','times_mdeit_fact','times_mdeit_fact_fwd','times_eit', ...
+            'std_mdeit','std_mdeit_fact','std_mdeit_fact_fwd','std_eit', ...
             'time_forward_solve_eit','std_forward_solve_eit', ...
             'time_forward_solve_mdeit','std_forward_solve_mdeit', ...
             'n_elems'} ...
@@ -229,112 +260,15 @@ function [mean_time,std_dev] = compute_execution_time(func, repetitions, varargi
         func(varargin{:});
         times(t) = toc;
     end
-
+    
     mean_time = sum(times) / repetitions;
     std_dev = std(times);
+
+    fprintf("Time: %2.2f (s)\n",times(t));
+
 end
 
 
-
-
-%% PLOTS
-% 
-
-% figure('Position',[100,100,1000,500]);
-% cla;
-% 
-% subplot(1,3,1)
-% hold on
-% errorbar(n_nodes_vector,time_forward_solve_eit,std_forward_solve_eit,'o-','MarkerSize',5,'Color',colors(2,:))
-% errorbar(n_nodes_vector,time_forward_solve_mdeit,std_forward_solve_mdeit,'d-','MarkerSize',5,'Color',colors(1,:))
-% hold off
-% 
-% p_f_mdeit = polyfit(...
-%     log10(n_nodes_vector),...
-%     log10(time_forward_solve_mdeit),...
-%     1);
-% 
-% p_f_eit = polyfit(...
-%     log10(n_nodes_vector),...
-%     log10(time_forward_solve_eit),...
-%     1);
-% 
-% hold on
-% x = linspace(min(n_nodes_vector),max(n_nodes_vector));
-% plot(x,10^p_f_eit(2)*x.^p_f_eit(1),'LineStyle','--','Color',colors(2,:))
-% plot(x,10^p_f_mdeit(2)*x.^p_f_mdeit(1),'LineStyle','--','Color',colors(1,:))
-% hold off
-% 
-% 
-% msg1 = strcat('EIT $(m = ',num2str(p_f_eit(1)),'$)'); 
-% msg2 = strcat('MDEIT $(m = ',num2str(p_f_mdeit(1)),'$)'); 
-% 
-% legend({msg1,msg2},'Interpreter','latex','Location','northwest')
-% 
-% box on;
-% grid on;grid minor;
-% 
-% set(gca,'YScale','log');
-% set(gca,'XScale','log');
-% 
-% xlabel('N','Interpreter','latex')
-% ylabel('t(s)','Interpreter','latex')
-% 
-% subplot(1,3,2)
-% hold on
-% errorbar(nnz_A_vector,time_forward_solve_eit,std_forward_solve_eit,'o-','MarkerSize',5,'Color',colors(2,:))
-% errorbar(nnz_A_vector,time_forward_solve_mdeit,std_forward_solve_mdeit,'d-','MarkerSize',5,'Color',colors(1,:))
-% hold off
-% 
-% p_A_mdeit = polyfit(...
-%     log10(nnz_A_vector),...
-%     log10(time_forward_solve_mdeit),...
-%     1);
-% 
-% p_A_eit = polyfit(...
-%     log10(nnz_A_vector),...
-%     log10(time_forward_solve_eit),...
-%     1);
-% 
-% hold on
-% x = linspace(min(nnz_A_vector),max(nnz_A_vector));
-% plot(x,10^p_A_eit(2)*x.^p_A_eit(1),'LineStyle','--','Color',colors(2,:))
-% plot(x,10^p_A_mdeit(2)*x.^p_A_mdeit(1),'LineStyle','--','Color',colors(1,:))
-% hold off
-% 
-% 
-% msg1 = strcat('EIT $(m = ',num2str(p_A_eit(1)),'$)'); 
-% msg2 = strcat('MDEIT $(m = ',num2str(p_A_mdeit(1)),'$)'); 
-% 
-% legend({msg1,msg2},'Interpreter','latex','Location','northwest')
-% 
-% box on;
-% grid on;grid minor;
-% 
-% set(gca,'YScale','log');
-% set(gca,'XScale','log');
-% 
-% xlabel('nnz(A)','Interpreter','latex')
-% ylabel('t(s)','Interpreter','latex')
-% 
-% subplot(1,3,3)
-% 
-% hold on
-% plot(n_nodes_vector,nnz_A_vector,'o','Color',colors(3,:));
-% 
-% box on;
-% grid on;grid minor;
-% 
-% ylabel('nnz(A)','Interpreter','latex')
-% xlabel('t(s)','Interpreter','latex')
-% 
-% p = polyfit(n_nodes_vector,nnz_A_vector,1);
-% x = linspace(min(n_nodes_vector),max(n_nodes_vector));
-% plot(x,p(1).*x+p(2),'Color',colors(3,:),'LineStyle','--')
-% 
-% msg = strcat('$(m = ',num2str(p(1)),'$)'); 
-% legend({msg},'Interpreter','latex','Location','northwest')
-% title('6 is the average number of neighbour nodes + 1 for diagonal')
 
 %% PLOTS
 figure;
@@ -342,35 +276,19 @@ cla;
 
 % fit_data_points = length(n_elem_vector):-1:length(n_elem_vector)-7;
 
-fit_data_points = 1:5;
+fit_data_points = 1:length(times_mdeit);
 
 hold on
-errorbar(n_elem_vector,times_eit,std_eit,'o-','MarkerSize',5,'Color',colors(2,:))
 errorbar(n_elem_vector,times_mdeit,std_mdeit,'d-','MarkerSize',5,'Color',colors(1,:))
+errorbar(n_elem_vector,times_eit,std_eit,'o-','MarkerSize',5,'Color',colors(2,:))
+errorbar(n_elem_vector,times_mdeit_factorized,std_mdeit_factorized,'d-','MarkerSize',5,'Color',colors(3,:))
 hold off
 
-p_mdeit = polyfit(...
-    log10(n_elem_vector(fit_data_points)),...
-    log10(times_mdeit(fit_data_points)),...
-    1);
+msg1 = strcat('MDEIT'); 
+msg2 = strcat('EIT'); 
+msg3 = strcat('MDEIT - factorized'); 
 
-p_eit = polyfit(...
-    log10(n_elem_vector(fit_data_points)),...
-    log10(times_eit(fit_data_points)),...
-    1);
-
-% We're checking a fit of the type t = 10^(b)*K^m
-
-hold on
-x = linspace(min(n_elem_vector(fit_data_points)),max(n_elem_vector(fit_data_points)));
-plot(x,10^p_eit(2)*x.^p_eit(1),'LineStyle','--','Color',colors(2,:))
-plot(x,10^p_mdeit(2)*x.^p_mdeit(1),'LineStyle','--','Color',colors(1,:))
-hold off
-
-msg1 = strcat('EIT $(m = ',num2str(p_eit(1)),'$)'); 
-msg2 = strcat('MDEIT $(m = ',num2str(p_mdeit(1)),'$)'); 
-
-legend({msg1,msg2},'Interpreter','latex','Location','northwest')
+legend({msg1,msg2,msg3},'Interpreter','latex','Location','northwest')
 
 box on;
 grid on;grid minor;
@@ -388,21 +306,8 @@ ylabel('$t(s)$','Interpreter','latex')
 
 axis([min_x,max_x,min_y,max_y])
 
-title('Jacobian computation time log-scale')
-%%
-function out = M(img,sigma)
+title('Jacobian computation time log-scale','Interpreter','latex')
 
-numNodes = size(img.fwd_model.nodes,1);
-
-img.elem_data = sigma;
-s_mat = system_mat_1st_order(img);
-
-Ac = s_mat.E(1:numNodes,1:numNodes);
-Ae = s_mat.E(1:numNodes,numNodes+1:end);
-Ad = s_mat.E(numNodes+1:end,numNodes+1:end);
-
-out = Ac-Ae*inv(Ad)*Ae';
-end
 
 
 
@@ -418,4 +323,32 @@ if isempty(patches)
 end
 set(patches, 'EdgeAlpha', 0.1);
 
+end
+
+%% FUNCTIONS
+function F = factorise_symmetric(A)
+    F.kind = 'ldl';
+    try
+        [F.L,F.D,F.P] = ldl(A,'vector'); 
+        F.n = size(A,1);
+    catch
+        [F.L,F.U,F.pv,F.qv] = lu(A,'vector'); 
+        F.kind='lu'; 
+        F.n   = size(A,1);
+    end
+end
+
+%%
+function out = M(img,sigma)
+
+numNodes = size(img.fwd_model.nodes,1);
+
+img.elem_data = sigma;
+s_mat = system_mat_1st_order(img);
+
+Ac = s_mat.E(1:numNodes,1:numNodes);
+Ae = s_mat.E(1:numNodes,numNodes+1:end);
+Ad = s_mat.E(numNodes+1:end,numNodes+1:end);
+
+out = Ac-Ae*inv(Ad)*Ae';
 end

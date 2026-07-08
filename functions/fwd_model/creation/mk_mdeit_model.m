@@ -138,8 +138,8 @@ if not(exist(model_name, 'file') == 2) || opts.recompute == true
 
     %% Save into file
     if ~isempty(model_name)
-        save(model_name,'fmdl');
-    end 
+        save(model_name, 'fmdl', '-v7.3');
+    end
 else %If this file already exists, load it
     var = load(model_name);
     fmdl = var.fmdl;

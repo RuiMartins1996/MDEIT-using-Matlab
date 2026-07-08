@@ -23,13 +23,15 @@ V0 = z0*I0/(l0^2); %(V)
 sigma0 = l0/z0; %(S/m)
 J0 = I0/(l0^2);
 
-model_parameters = create_default_3d_model_parameters(l0, z0, sigma0, I0);
+model_parameters = create_kai_3d_model_parameters(l0, z0, sigma0, I0);
 
 model_parameters.maxsz = max(model_parameters.height,model_parameters.radius)/8;
 model_parameters.numOfElectrodesPerRing = 8;
 model_parameters.numOfRings = 4;
 model_parameters.numOfSensors = 4;
 model_parameters.sensorRadius = model_parameters.radius*1.5;
+model_parameters.material.name = 'sphere';
+model_parameters.material.radius = model_parameters.radius/3;
 model_parameters.material.type = 'spherical';
 model_parameters.material.position(3) = 3/4*model_parameters.height;
 
@@ -408,6 +410,13 @@ if strcmp(mode,'mdeit3') && nargin<10
 end
 
 sensor_locations = vector_to_sensor_locations(q);
+
+% The cylindrical chain-rule Jacobian depends on the current (r,theta) of
+% each sensor, not just the initial configuration: it must be re-evaluated
+% at the current iterate (the passed-in jacobian_coordinate_transformation
+% was previously stale, captured once at sensor_locations_0).
+jacobian_coordinate_transformation = ...
+    compute_jacobian_coordinate_transformation_cylindrical(sensor_locations);
 
 switch mode
     case 'mdeit1'
@@ -791,12 +800,11 @@ img.Gamma3 = Gamma3;
 end
 
 function [Rx,Ry,Rz,fmdl] = compute_r_matrices_local(fmdl,sensor_locations)
+% Vectorized over elements and quadrature points (loop only over sensors).
+% Replaces the previous interpreted triple loop (sensors x elements x 35
+% quad points), which is ~100x slower for meshes of a few thousand elements.
 numElements = size(fmdl.elems,1);
 numSensors = size(sensor_locations,1);
-
-Rx = zeros(numSensors,numElements);
-Ry = zeros(numSensors,numElements);
-Rz = zeros(numSensors,numElements);
 
 coord = [    0.0000000000000000  0.0000000000000000  0.0000000000000000
     0.0000000000000000  0.0000000000000000  1.0000000000000000
@@ -870,35 +878,41 @@ weights = [  -0.0119047619047619
     0.0380952380952381
     0.3047619047619048];
 
+numQuadPts = length(weights);
+
+V = reshape(fmdl.nodes(fmdl.elems',:),[4,numElements,3]);
+v1 = squeeze(V(1,:,:)); v2 = squeeze(V(2,:,:));
+v3 = squeeze(V(3,:,:)); v4 = squeeze(V(4,:,:));
+
+a = v2-v1; b = v3-v1; c = v4-v1;
+detJ = abs(sum(a .* cross(b,c,2),2))';   % 1 x numElements
+
+Jm = zeros(3,3,numElements);
+Jm(:,1,:) = permute(a,[2 3 1]);
+Jm(:,2,:) = permute(b,[2 3 1]);
+Jm(:,3,:) = permute(c,[2 3 1]);
+
+xi = reshape(v1',[3,1,numElements]) + ...
+    Jm(:,1,:).*reshape(coord(:,1),[1,numQuadPts,1]) + ...
+    Jm(:,2,:).*reshape(coord(:,2),[1,numQuadPts,1]) + ...
+    Jm(:,3,:).*reshape(coord(:,3),[1,numQuadPts,1]);
+xi = permute(xi,[2 1 3]);                % numQuadPts x 3 x numElements
+
+Rx = zeros(numSensors,numElements);
+Ry = zeros(numSensors,numElements);
+Rz = zeros(numSensors,numElements);
+
+w = reshape(weights,[numQuadPts,1,1]);
+
 for m = 1:numSensors
     rm = sensor_locations(m,:);
-    fun = @(x,y,z) (rm - [x,y,z])./ (sum((rm - [x, y, z]).^2)^1.5);
-    for k = 1:numElements
-
-        %Find the vertices of the tetrahedron
-        v = fmdl.nodes(fmdl.elems(k,:),:);
-
-        J = [(v(2,:)-v(1,:))',(v(3,:)-v(1,:))',(v(4,:)-v(1,:))'];
-
-        detJ = abs(det(J));
-
-        R = 0;
-        for i = 1:length(weights)
-
-            r = coord(i,1);
-            s = coord(i,2);
-            t = coord(i,3);
-
-            xi = v(1,:)' + J * [r; s; t];
-
-            R = R + weights(i)*fun(xi(1),xi(2),xi(3));
-        end
-
-        R =  (detJ / 6) * R;
-        Rx(m,k) = R(1);
-        Ry(m,k) = R(2);
-        Rz(m,k) = R(3);
-    end
+    dm = rm - xi;                        % numQuadPts x 3 x numElements
+    nrm3 = sum(dm.^2,2).^(3/2);
+    f = dm ./ nrm3;
+    integ = sum(f.*w,1);                 % 1 x 3 x numElements
+    Rx(m,:) = squeeze(integ(1,1,:))'.*(detJ/6);
+    Ry(m,:) = squeeze(integ(1,2,:))'.*(detJ/6);
+    Rz(m,:) = squeeze(integ(1,3,:))'.*(detJ/6);
 end
 
 fmdl.R.Rx = Rx;
@@ -1622,9 +1636,12 @@ for dim = 1:3
         for m = 1:num_sensors
             %% --- dJ1: contribution from dlambda ---
             % dlambda * G matrices, size: n_elem x 1
-            dlGx = G.Gx*dlambda{p}(:,m);
-            dlGy = G.Gy*dlambda{p}(:,m);
-            dlGz = G.Gz*dlambda{p}(:,m);
+            % NOTE: dlambda must be indexed {dim,p} (dlambda is a 3x3 cell;
+            % linear indexing {p} previously gave the wrong adjoint
+            % derivative for most (dim,p) combinations)
+            dlGx = G.Gx*dlambda{dim,p}(:,m);
+            dlGy = G.Gy*dlambda{dim,p}(:,m);
+            dlGz = G.Gz*dlambda{dim,p}(:,m);
 
             % Elementwise multiplication and sum over components
             % tmp: n_elem x num_stim
@@ -2046,11 +2063,11 @@ H = J.'*inv_Gamma_noise*J + inv_Gamma_prior;
 
 L = chol(H,'lower');
 
-% Compute H^{-2} through Cholesky factorization and linear system solves
-
-% Solve L'Y = I -> LH^{-1} = Y -> L'W = H^{-1} -> L H^{-2} = W
-Y = L'\eye(n_elem);
-invH = L\Y;
+% Compute H^{-1} through Cholesky factorization and linear system solves
+% H = L*L' -> H^{-1} = L'^{-1}*L^{-1}: solve L first, then L'
+% (previous order L'\eye then L\... computed inv(L*L') = inv(L'*L), wrong)
+X = L\eye(n_elem);
+invH = L'\X;
 
 W = inv_Gamma_noise*J*invH;
 
@@ -2086,12 +2103,12 @@ H = J.'*inv_Gamma_noise*J + inv_Gamma_prior;
 L = chol(H,'lower');
 
 % Compute H^{-2} through Cholesky factorization and linear system solves
-
-% Solve L'Y = I -> LH^{-1} = Y -> L'W = H^{-1} -> L H^{-2} = W
-Y = L'\eye(n_elem);
-X = L\Y;
-W = L'\X;
-inv_H2 = L\W;
+% H = L*L' -> H^{-1} = L'^{-1}*L^{-1}: solve L first, then L' (twice)
+% (previous order L'\eye first computed inv(L*L') = inv(L'*L), wrong)
+X = L\eye(n_elem);
+invH = L'\X;
+Z = L\invH;
+inv_H2 = L'\Z;
 
 W = inv_Gamma_noise*J*inv_H2;
 
@@ -2145,18 +2162,12 @@ H = J.'*inv_Gamma_noise*J + inv_Gamma_prior;
 L = chol(H,'lower');
 
 % Compute H^{-2} through Cholesky factorization and linear system solves
-
-% Solve L'Y = I -> LH^{-1} = Y -> L'W = H^{-1} -> L H^{-2} = W
-Y = L'\eye(n_elem);
-X = L\Y;
-W = L'\X;
-inv_H2 = L\W;
-
-% THis is wrong I think
-% Y = L \ (L' \ J');      % H^{-1} J'
-% Z = L \ (L' \ Y);       % H^{-2} J'
-% W = inv_Gamma_noise * J * Z';
-
+% H = L*L' -> H^{-1} = L'^{-1}*L^{-1}: solve L first, then L' (twice)
+% (previous order L'\eye first computed inv(L*L') = inv(L'*L), wrong)
+X = L\eye(n_elem);
+invH = L'\X;
+Z = L\invH;
+inv_H2 = L'\Z;
 
 W = inv_Gamma_noise*J*inv_H2;
 
@@ -2225,11 +2236,11 @@ H = J.'*inv_Gamma_noise*J + inv_Gamma_prior;
 
 L = chol(H,'lower');
 
-% Compute H^{-2} through Cholesky factorization and linear system solves
-
-% Solve L'Y = I -> LH^{-1} = Y -> L'W = H^{-1} -> L H^{-2} = W
-Y = L'\eye(n_elem);
-invH = L\Y;
+% Compute H^{-1} through Cholesky factorization and linear system solves
+% H = L*L' -> H^{-1} = L'^{-1}*L^{-1}: solve L first, then L'
+% (previous order L'\eye then L\... computed inv(L*L') = inv(L'*L), wrong)
+X = L\eye(n_elem);
+invH = L'\X;
 
 W = inv_Gamma_noise*J*invH;
 

@@ -40,24 +40,49 @@ else
     error('No data file found named %s\n',file_name);
 end
 
+% target_num_sensors = 30;
+% target_num_electrodes = 'any';
 
-
+target_num_sensors = 'any';
+target_num_electrodes = 16;
 
 %% Fetch data from table
 
-electrode_count = T.num_electrodes_per_ring.*T.num_rings;
-sensor_count = T.num_sensors;
 
-times_eit = T.times_eit;
-times_mdeit = T.times_mdeit;
-std_eit = T.std_eit;
-std_mdeit = T.std_mdeit;
-time_forward_solve_eit = T.time_forward_solve_eit;
-time_forward_solve_mdeit = T.time_forward_solve_mdeit;
-std_forward_solve_eit = T.std_forward_solve_eit;
-std_forward_solve_mdeit = T.std_forward_solve_mdeit;
-n_elems = T.n_elems;
 
+% times_eit = T.times_eit;
+% times_mdeit = T.times_mdeit;
+% std_eit = T.std_eit;
+% std_mdeit = T.std_mdeit;
+% time_forward_solve_eit = T.time_forward_solve_eit;
+% time_forward_solve_mdeit = T.time_forward_solve_mdeit;
+% std_forward_solve_eit = T.std_forward_solve_eit;
+% std_forward_solve_mdeit = T.std_forward_solve_mdeit;
+% n_elems = T.n_elems;
+
+if strcmp(target_num_electrodes,'any')
+    ids = find(T.num_sensors == target_num_sensors);
+elseif strcmp(target_num_sensors,'any')
+    ids = find(T.num_electrodes_per_ring.*T.num_rings == target_num_electrodes);
+    n_elems = T.n_elems(ids);
+    ids2 = find(T.n_elems(ids)== mode(n_elems));
+    ids = ids(ids2);
+else
+    error('One of them should be any');
+end
+
+electrode_count = T.num_electrodes_per_ring(ids).*T.num_rings(ids);
+sensor_count = T.num_sensors(ids);
+
+times_eit = T.times_eit(ids);
+times_mdeit = T.times_mdeit(ids);
+std_eit = T.std_eit(ids);
+std_mdeit = T.std_mdeit(ids);
+time_forward_solve_eit = T.time_forward_solve_eit(ids);
+time_forward_solve_mdeit = T.time_forward_solve_mdeit(ids);
+std_forward_solve_eit = T.std_forward_solve_eit(ids);
+std_forward_solve_mdeit = T.std_forward_solve_mdeit(ids);
+n_elems = T.n_elems(ids);
 
 %% PLOTS
 % SHOULD PACK THIS INTO A FUNCTION!!!!!!!!
@@ -447,3 +472,76 @@ grid on;grid minor;
 set(gca,'YScale','log');
 set(gca,'XScale','log');
 axis square
+
+
+%% Execution time of MDEIT Jacobian w.r.t. M and L
+
+
+if strcmp(target_num_electrodes,'any')
+
+    figure('Name','1-axis MDEIT Jacobian execution time w.r.t. L')
+
+    hold on
+    errorbar(electrode_count,times_mdeit,std_mdeit,'d','MarkerSize',5,'Color',colors(3,:))
+
+    p_mdeit = polyfit(electrode_count,times_mdeit,1);
+    x1 = linspace(min(electrode_count),max(electrode_count));
+    y_plot = polyval(p_mdeit,x1);
+    y_fit_1 = polyval(p_mdeit,electrode_count);
+    y1 = times_mdeit;
+
+    SS_res = sum((y1(:) - y_fit_1(:)).^2);
+    SS_tot = sum((y1(:) - mean(y1(:))).^2);
+
+    R2 = 1 - (SS_res / SS_tot);
+
+    plot(x1,y_plot,'--','Color',colors(5,:),'LineWidth',1);
+    hold off
+
+    msg1 = strcat(' linear fit - $R^2 = ',num2str(R2),'$');
+    legend('$1$-axis MDEIT',msg1,'interpreter','latex','location','southeast');
+
+    xlabel('$N_{stim}$','Interpreter','latex');
+    ylabel('$t(s)$','Interpreter','latex')
+
+    title('$1$-axis MDEIT Jacobian computation','Interpreter','latex')
+
+    box on;
+    grid on;grid minor;
+    axis square
+
+elseif strcmp(target_num_sensors,'any')
+    figure('Name','1-axis MDEIT Jacobian execution time w.r.t. M')
+
+    hold on
+    errorbar(sensor_count,times_mdeit,std_mdeit,'d','MarkerSize',5,'Color',colors(3,:))
+    p_mdeit = polyfit(sensor_count,times_mdeit,1);
+    x1 = linspace(min(sensor_count),max(sensor_count));
+    y_plot = polyval(p_mdeit,x1);
+    y_fit_1 = polyval(p_mdeit,sensor_count);
+    y1 = times_mdeit;
+
+    SS_res = sum((y1(:) - y_fit_1(:)).^2);
+    SS_tot = sum((y1(:) - mean(y1(:))).^2);
+
+    R2 = 1 - (SS_res / SS_tot);
+
+    plot(x1,y_plot,'--','Color',colors(5,:),'LineWidth',1);
+    hold off
+
+    msg1 = strcat(' linear fit - $R^2 = ',num2str(R2),'$');
+    legend('$1$-axis MDEIT',msg1,'interpreter','latex','location','southeast');
+
+    xlabel('$N_{sens} $','Interpreter','latex');
+    ylabel('$t(s)$','Interpreter','latex')
+
+    title('$1$-axis MDEIT Jacobian computation','Interpreter','latex')
+
+    % set(gca,'YScale','log');
+    % set(gca,'XScale','log');
+
+    box on;
+    grid on;grid minor;
+    axis square
+end
+

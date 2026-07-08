@@ -182,7 +182,7 @@ J0 = I0/(l0^2);
 
 % For small SNR, noise level might be bigger in magnitude than difference
 % data. Does that measurement even make sense?
-SNRdb = 20;
+SNRdb = 50;
 
 
 % minsz_mesh_convergence = 0.05;
@@ -191,11 +191,11 @@ SNRdb = 20;
 
 % maxsz_reconstruction = 0.05;
 
-minsz_mesh_convergence = 0.05;
-maxsz_mesh_convergence = 0.05;
+minsz_mesh_convergence = 0.02;
+maxsz_mesh_convergence = 0.02;
 num_meshes_mesh_convergence = 1;
 
-maxsz_reconstruction = 0.02;
+maxsz_reconstruction = 0.03;
 
 background_conductivity = 3.28e-1/sigma0;  %page 163 mentions a saline solution (NaCl + water) at 0.2% mass concentration, but can't find data for that conductivity, check notes
 
@@ -772,30 +772,30 @@ img_output_mdeit_1_corrected.elem_data = img_output_mdeit_1.elem_data./sigma_std
 
 %% Try Kaipio's approach of computing posterior covariance matrix
 
-Gamma_pr = background_conductivity*diag(ones(n_elem,1));
-Gamma_noise = noise_level_mdeit*eye(size(J_mdeit,1));
-
-Gamma_post = inv(J_mdeit'*inv(Gamma_noise)*J_mdeit+inv(Gamma_pr)); %Moore Penrose pseudo inverse
-% Gamma_post should be symmetric, so force symmetry. This stops problems
-% with eig
-
-Gamma_post = (Gamma_post+Gamma_post')/2;
-
-img_output_mdeit_1_corrected_3 = img_output_mdeit_1;
-img_output_mdeit_1_corrected_3.elem_data = img_output_mdeit_1_corrected_3.elem_data./sqrt(diag(Gamma_post));
-
+% Gamma_pr = background_conductivity*diag(ones(n_elem,1));
+% Gamma_noise = noise_level_mdeit*eye(size(J_mdeit,1));
+% 
+% Gamma_post = inv(J_mdeit'*inv(Gamma_noise)*J_mdeit+inv(Gamma_pr)); %Moore Penrose pseudo inverse
+% % Gamma_post should be symmetric, so force symmetry. This stops problems
+% % with eig
+% 
+% Gamma_post = (Gamma_post+Gamma_post')/2;
+% 
 % img_output_mdeit_1_corrected_3 = img_output_mdeit_1;
 % img_output_mdeit_1_corrected_3.elem_data = img_output_mdeit_1_corrected_3.elem_data./sqrt(diag(Gamma_post));
-
-img_output_mdeit_1_corrected_4 = img_output_mdeit_1;
-
-[V1,D1] = eig(Gamma_post);
-gamma = 0.9*max(diag(D1));
-g = diag(D1)./(diag(D1) + gamma);
-
-img_output_mdeit_1_corrected_4.elem_data =...
-    V1 * diag(g) * (V1' * img_output_mdeit_1_corrected_4.elem_data) + ...   %projection into eigenbasis (shrink high-variance modes by factor of g)
-    (eye(size(V1*V1')) - V1*V1')*img_output_mdeit_1_corrected_4.elem_data;  %orthogonal projection into kernel (don't do anything)
+% 
+% % img_output_mdeit_1_corrected_3 = img_output_mdeit_1;
+% % img_output_mdeit_1_corrected_3.elem_data = img_output_mdeit_1_corrected_3.elem_data./sqrt(diag(Gamma_post));
+% 
+% img_output_mdeit_1_corrected_4 = img_output_mdeit_1;
+% 
+% [V1,D1] = eig(Gamma_post);
+% gamma = 0.9*max(diag(D1));
+% g = diag(D1)./(diag(D1) + gamma);
+% 
+% img_output_mdeit_1_corrected_4.elem_data =...
+%     V1 * diag(g) * (V1' * img_output_mdeit_1_corrected_4.elem_data) + ...   %projection into eigenbasis (shrink high-variance modes by factor of g)
+%     (eye(size(V1*V1')) - V1*V1')*img_output_mdeit_1_corrected_4.elem_data;  %orthogonal projection into kernel (don't do anything)
 
 %% Save data
 
@@ -806,6 +806,26 @@ save(file_name,"imgi",...
     "img_output_mdeit_1","img_output_eit",...
     "sigma_std_deviation_eit","sigma_std_deviation_mdeit");
 
+%%
+
+figure
+show_fem(imgi)
+view(2); axis equal; axis off;
+box on;
+
+figure
+show_fem(img_output_eit)
+hh = findobj(gca, 'type', 'patch');
+set(hh, 'EdgeColor', 'none');
+view(2); axis equal; axis off;
+box on;
+
+figure
+show_fem(img_output_mdeit_1)
+hh = findobj(gca, 'type', 'patch');
+set(hh, 'EdgeColor', 'none');
+view(2); axis equal; axis off;
+box on;
 %% Show reconstruction
 figure('Position',[200,200,1000,500]);
 
