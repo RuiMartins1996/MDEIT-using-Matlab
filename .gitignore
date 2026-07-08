@@ -8,15 +8,13 @@
 *.jpg
 *.jpeg
 
-
-
 # Live scripts
 *.mlx~
 
 # FOLDERS
 studies/**/data/*.mat
-*.fig
-**/data*/ #Ignore any folder whose name starts with data
+# Ignore any folder whose name starts with "data"
+**/data*/
 /studies/opm_noise
 **/*eidors*/
 
