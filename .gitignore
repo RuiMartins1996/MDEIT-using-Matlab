@@ -1,0 +1,25 @@
+# MATLAB
+*.asv
+*.mat
+
+# Figures
+*.fig
+*.png
+*.jpg
+*.jpeg
+
+
+
+# Live scripts
+*.mlx~
+
+# FOLDERS
+studies/**/data/*.mat
+*.fig
+**/data*/ #Ignore any folder whose name starts with data
+/studies/opm_noise
+**/*eidors*/
+
+# OS
+.DS_Store
+Thumbs.db
