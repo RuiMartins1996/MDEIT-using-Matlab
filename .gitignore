@@ -1,23 +1,16 @@
-# MATLAB
 *.asv
 *.mat
 
-# Figures
 *.fig
 *.png
 *.jpg
 *.jpeg
 
-# Live scripts
 *.mlx~
 
-# FOLDERS
 studies/**/data/*.mat
-# Ignore any folder whose name starts with "data"
 **/data*/
-/studies/opm_noise
+studies/opm_noise
 **/*eidors*/
 
-# OS
-.DS_Store
-Thumbs.db
+
