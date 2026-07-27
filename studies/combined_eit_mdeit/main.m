@@ -39,7 +39,7 @@ num_noise_repetitions = 30;
 %% Problem parameters
 
 % Default 3D model
-model_parameters = create_default_3d_model_parameters(l0, z0, sigma0, I0);
+model_parameters = create_kai_3d_model_parameters(l0, z0, sigma0, I0);
 % with some changes
 model_parameters.maxsz = model_parameters.radius/5;
 model_height = model_parameters.height/2;

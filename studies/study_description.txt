@@ -17,3 +17,12 @@ Implements the experiment on the saline tank in Kai's thesis
 reconstructions_for_several_regularization_parameters:
 
 Performs 2D 1-axis MDEIT and EIT reconstructions for a similar setting of Kai's tank experiment for multiple regularization parameters.
+
+sequential_cascade_reconstruction:
+
+Joint EIT + MDEIT reconstruction via a sequential (cascaded) inversion with
+cross-modality priors (Approach 3 of joint_eit_mdeit_strategies). One modality
+shapes the regularizer of the other through a consensus soft-weight map instead
+of stacking data residuals, directly attacking the vertical-elongation artifact.
+Reusable helpers: run_consensus_cascade, build_consensus_weight_map,
+solve_weighted_tikhonov, cascade_metrics.
