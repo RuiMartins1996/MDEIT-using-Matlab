@@ -91,7 +91,7 @@ anomaly_conductivity = 5*background_conductivity;  % conductive anomaly
 rng(1);
 opt_modes = {'a-opt'};
 
-n_starts = 4;                  % 1 = start from the even configuration only
+n_starts = 10;                  % 1 = start from the even configuration only
 
 
 d_target = 4;                  % desired # of data-dominated modes
