@@ -83,6 +83,60 @@ savefig(fig,fullfile(figures_folder,'hyvonen_fig2_mdeit.fig'));
 saveas(fig,fullfile(figures_folder,'hyvonen_fig2_mdeit.png'));
 fprintf('Saved figures/hyvonen_fig2_mdeit.{fig,png}\n');
 
+%% 4 figures separated
+
+fig = figure('Name','Hyvonen Fig. 2 (MDEIT)','Position',[100 50 500 500]);
+
+% Geometry
+w = 0.37;      % panel width
+h = 0.37;      % panel height
+gx = 0.13;     % horizontal gap
+gy = 0.03;     % vertical gap
+
+% Center the 2x2 block
+left = (1 - (2*w + gx))/2;
+bottom = 0.21;
+
+ax1 = axes('Position',[left         bottom+h+gy  w h]);
+ax2 = axes('Position',[left+w+gx    bottom+h+gy  w h]);
+ax4 = axes('Position',[left         bottom       w h]);
+ax3 = axes('Position',[left+w+gx    bottom       w h]);
+
+draw_panel(ax1,nodes,elems,electrode_nodes,R.prior_variance,clim_max,[],rs,model_radius);
+
+draw_panel(ax2,nodes,elems,electrode_nodes,R.post_var_bf_polished{1}{1},clim_max,...
+    R.theta_bf_polished{1}{1},rs,model_radius);
+
+draw_panel(ax4,nodes,elems,electrode_nodes,R.post_var_even,clim_max,R.theta_even,rs,model_radius);
+
+draw_panel(ax3,nodes,elems,electrode_nodes,R.post_var_fminunc{1}{1},clim_max,...
+    R.theta_fminunc{1}{1},rs,model_radius);
+
+% Correct colors
+colormap(fig,hot);
+
+for ax = [ax1 ax2 ax3 ax4]
+    clim(ax,[0 clim_max]);
+end
+
+pos1 = ax1.Position;
+pos2 = ax2.Position;
+
+leftPanels  = pos1(1);
+rightPanels = pos2(1) + pos2(3);
+centerPanels = (leftPanels + rightPanels)/2;
+
+cb = colorbar(ax1,'southoutside');
+cb.Label.String = 'Point variance';
+cbWidth = 0.60;
+cbHeight = 0.04;
+cbBottom = 0.10;
+cb.Position = [0.5-cbWidth/2, cbBottom, cbWidth, cbHeight];
+
+savefig(fig,fullfile(figures_folder,'hyvonen_mdeit_rui.fig'));
+saveas(fig,fullfile(figures_folder,'hyvonen_mdeit_rui.png'));
+
+
 %% Optional: cost landscape (sorted phi_grid with fminunc / BF-polished marked)
 figL = figure('Name','Cost landscape','Position',[100 100 1000 450]);
 opt_modes = R.opt_modes{1};
@@ -107,7 +161,7 @@ function draw_panel(ax,nodes,elems,electrode_nodes,post_var,clim_max,theta,rs,mo
 axes(ax); %#ok<LAXES>
 patch(ax,'Faces',elems,'Vertices',nodes,'FaceVertexCData',post_var,...
     'FaceColor','flat','EdgeColor','none');
-axis(ax,'equal','off');
+axis(ax,'square','off');
 clim(ax,[0 clim_max]);
 hold(ax,'on');
 
@@ -117,7 +171,7 @@ if ~isempty(theta)
     draw_sensors(ax,theta,rs);
 end
 
-lim = 1.25*rs;
+lim = 1.1*rs;
 xlim(ax,[-lim lim]); ylim(ax,[-lim lim]);
 hold(ax,'off');
 end
@@ -133,14 +187,14 @@ for e = 1:numel(electrode_nodes)
     ang = atan2(xy(:,2),xy(:,1));
     [~,ord] = sort(ang);
     xy = xy(ord,:);
-    plot(ax,xy(:,1),xy(:,2),'k-','LineWidth',4);
+    plot(ax,xy(:,1),xy(:,2),'r-','LineWidth',4);
 
-    if e == 1
-        mean_ang = atan2(mean(xy(:,2)),mean(xy(:,1)));
-        cord = [0.15*model_radius*cos(mean_ang), 0.15*model_radius*sin(mean_ang)];
-        outer = mean(xy,1) + cord;
-        plot(ax,[mean(xy(:,1)) outer(1)],[mean(xy(:,2)) outer(2)],'k-','LineWidth',4);
-    end
+    % if e == 1
+    %     mean_ang = atan2(mean(xy(:,2)),mean(xy(:,1)));
+    %     cord = [0.15*model_radius*cos(mean_ang), 0.15*model_radius*sin(mean_ang)];
+    %     outer = mean(xy,1) + cord;
+    %     plot(ax,[mean(xy(:,1)) outer(1)],[mean(xy(:,2)) outer(2)],'r-','LineWidth',4);
+    % end
 end
 end
 
@@ -149,6 +203,6 @@ function draw_sensors(ax,theta,rs)
 theta = theta(:);
 xs = rs*cos(theta);
 ys = rs*sin(theta);
-plot(ax,xs,ys,'s','MarkerSize',10,'MarkerFaceColor',[0.2 0.4 0.9],...
+plot(ax,xs,ys,'o','MarkerSize',10,'MarkerFaceColor',[0.2 0.4 0.9],...
     'MarkerEdgeColor','k','LineWidth',1.2);
 end
