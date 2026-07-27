@@ -5,11 +5,13 @@
 *.png
 *.jpg
 *.jpeg
+*.pdf
 
 *.mlx~
 
 studies/**/data/*.mat
 **/data*/
+**/figures*/
 studies/opm_noise
 **/*eidors*/
 
