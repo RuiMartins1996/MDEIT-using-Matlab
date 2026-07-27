@@ -1,1 +1,0 @@
-addpath ../GREIT-algorithm

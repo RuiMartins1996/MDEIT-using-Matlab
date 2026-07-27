@@ -14,5 +14,6 @@ studies/**/data/*.mat
 **/figures*/
 studies/opm_noise
 **/*eidors*/
+eidors-v3.12-ng/
 
 
