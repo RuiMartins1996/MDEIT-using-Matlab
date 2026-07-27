@@ -1,38 +1,21 @@
-%% EXAMPLE: Bayesian optimization of sensor positions on a circle (MDEIT)
+%% BRUTE FORCE: exhaustive grid search vs. gradient-based optimization
 %
-% Sensors are constrained to a circle of radius rs at half the height of a
-% cylindrical tank. A conductive spherical anomaly sits off-center at half
-% height. The prior encodes "we know roughly WHERE the anomaly may be, but
-% not its value": large prior variance in a ball around the suspected
-% anomaly location, small variance in the background (cf. Hyvonen,
-% Seppanen & Staboulis, Case 1). Because the informative region is
-% off-center, the optimal sensors are NOT evenly spaced: they migrate
-% toward the anomaly side, and the A-/D-optimality costs drop considerably
-% compared to the evenly spaced configuration.
+% Validates the fminunc-based A-optimal sensor-angle search in
+% example_anomaly_circle.m against an EXHAUSTIVE grid search over sensor
+% angles, for the 4-electrode / 4-magnetometer configuration (same model,
+% prior, and noise calibration as example_anomaly_circle.m; see that
+% script for the full derivation and diagnostics).
 %
-% Design criteria (Bz-only MDEIT, linearized around the prior mean):
-%   A-optimality: minimize trace(H^-1),      H = J'*inv(Gn)*J + inv(Gpr)
-%   D-optimality: minimize -log det(H)  (=  log det posterior covariance)
-% Only the z-channel (Bz) magnetometer measurements enter the design and
-% the reconstruction; J is the z-only Jacobian dBz/dsigma.
+% Sensors are unordered (relabeling the four magnetometers doesn't change
+% the design), so the angle search only needs COMBINATIONS of grid
+% angles, not permutations: nchoosek(1:grid_n,4) candidates instead of
+% grid_n^4. The comparison reported at the end is:
+%   phi(even spacing)  vs  phi(fminunc, local)  vs  phi(brute force, grid)
+% plus a local polish of the best grid point (fminunc started from the
+% brute-force optimum) to remove the grid's discretization error -- this
+% is the fairest "global minimum" estimate to compare fminunc against.
 %
-% The gradients are analytic: dphi = -2*<W, dJ/dp>_F with
-%   W_A = inv(Gn)*J*H^-2,   W_D = inv(Gn)*J*H^-1,
-% and dJ/dp assembled from (i) extra adjoint solves for dlambda/dp and
-% (ii) the explicit derivative of the Biot-Savart kernel integrals.
-%
-% Performance: sigma is FROZEN at the prior mean throughout, so build_ctx
-% precomputes once (before fminunc) everything independent of the sensor
-% positions -- the EIT forward solve u and G*u, the FACTORED CEM operator
-% (grounded once; adjoint solves become cheap block back-substitutions
-% instead of per-iterate PCG), and the mesh quadrature geometry. Each
-% cost/gradient evaluation then only recomputes the position-dependent
-% Biot-Savart integrals R (once, shared by cost and gradient) and dR/dp
-% (each kernel index j once). The optional sensor repulsion is scaled by
-% the objective value so its weight alpha_rep is scale-free.
-%
-% Run "quick_test = true; example_anomaly_circle" for a fast smoke test
-% (few iterations + finite-difference gradient check).
+% Run "quick_test = true; brute_force_4x4" for a coarse/fast smoke test.
 
 %% Prepare workspace
 fullpath = mfilename('fullpath');
@@ -48,7 +31,7 @@ rng(1);
 
 if ~exist('quick_test','var'), quick_test = false; end
 
-%% Model parameters
+%% Model parameters (identical to example_anomaly_circle.m, 4-electrode/4-sensor config)
 z0 = 0.0058;  %(Ohm m^2) contact impedance
 l0 = 40e-3;   %(m) tank radius (characteristic length)
 I0 = 2.4e-3;  %(A) injected current magnitude
@@ -56,7 +39,6 @@ I0 = 2.4e-3;  %(A) injected current magnitude
 sigma0 = l0/z0; %(S/m) characteristic conductivity
 
 model_parameters = create_kai_3d_model_parameters(l0, z0, sigma0, I0);
-
 
 model_parameters.maxsz = model_parameters.radius/20;
 model_parameters.height = 0.6;
@@ -73,7 +55,7 @@ model_parameters.material.position = ...
 
 % Sensors: M evenly spaced on a circle of radius rs at half height
 n_sensors = 4;
-rs = 1.05*model_parameters.radius;         % circle radius (fixed)
+rs = 1.05*model_parameters.radius;        % circle radius (fixed, close to domain)
 zs = model_parameters.height/2;           % circle height (fixed)
 
 theta_even = 2*pi*(0:n_sensors-1)'/n_sensors;
@@ -86,42 +68,25 @@ background_conductivity = 3.28e-1/sigma0;
 anomaly_conductivity = 5*background_conductivity;  % conductive anomaly
 
 %% Simulation parameters
-opt_modes = {'a-opt','d-opt'};
-opt_modes = {'a-opt'};
+opt_mode = 'a-opt';
 
-max_iterations = 30;
-n_starts = 1;                  % 1 = start from the even configuration only
-                                % (multistart with n_starts=3 was checked: all
-                                % starts converge to the same a-opt minimum;
-                                % d-opt starts agree to within 0.03%)
-do_gradient_check = false;
-
-% The noise level is calibrated from the whitened Jacobian spectrum so
-% that d_target eigenmodes are data-dominated. This guarantees the design
-% problem sits in the regime where the data (and hence the sensor
-% positions) actually matter: with too much noise the prior dominates and
-% the cost is insensitive to the positions; with too little noise every
-% configuration recovers the ROI almost perfectly and the criteria
-% saturate.
-% Note the interplay between d_target and the ROI size: the data can
-% constrain at most ~d_target directions of the prior, so if the ROI
-% contains many more elements than d_target, NO sensor arrangement can
-% reduce the A-cost substantially and the design becomes insensitive.
-d_target = 10;                % desired # of data-dominated modes
+d_target = 10;                 % desired # of data-dominated modes
 
 prior_std_background = 0.05*background_conductivity;
 prior_std_roi        = 1.00*background_conductivity;
 roi_radius_factor    = 1.0;    % ROI ball radius = factor * anomaly radius
 
-alpha_rep = 1e-5;                 % pairwise sensor repulsion weight (optional)
+alpha_rep = 1e-5;              % pairwise sensor repulsion weight (optional)
+
+if ~exist('grid_n','var'), grid_n = 24; end   % angle grid resolution (15 deg steps)
+max_iterations = 30;                          % for the fminunc comparison runs
 
 if quick_test
     max_iterations = 3;
-    n_starts = 1;
-    do_gradient_check = true;
+    grid_n = 10;                % coarse/fast grid for a smoke test
 end
 
-%% Make forward models
+%% Make forward models (same as example_anomaly_circle.m)
 [~,fmdls] = mk_mdeit_model(model_parameters,model_folder);
 fmdl_fwd = fmdls{1};
 
@@ -136,7 +101,7 @@ fmdl_recon = fmdls{1};
 imgh_fwd = mk_image_mdeit(fmdl_fwd,background_conductivity);
 imgh_recon = mk_image_mdeit(fmdl_recon,background_conductivity);
 
-% Image with the anomaly (ground truth, used for visualization only)
+% Image with the anomaly (ground truth, used only for noise calibration)
 imgi_fwd = add_material_properties(imgh_fwd,[background_conductivity,anomaly_conductivity]);
 
 n_stim  = numel(fmdl_recon.stimulation);
@@ -145,8 +110,6 @@ n_nodes = size(fmdl_recon.nodes,1);
 
 fprintf('Model: %i elements, %i nodes, %i stims, %i sensors (Bz only)\n',...
     n_elem,n_nodes,n_stim,n_sensors);
-
-A = @(x) M(imgh_recon,x);
 
 %% Prior covariance: informative about WHERE the anomaly may be
 anomaly_center = model_parameters.material.position;
@@ -158,123 +121,26 @@ roi = centroid_dist <= roi_radius;
 prior_variance = prior_std_background^2*ones(n_elem,1);
 prior_variance(roi) = prior_std_roi^2;
 
-% Gamma_prior     = spdiags(prior_variance,0,n_elem,n_elem);
-% inv_Gamma_prior = spdiags(1./prior_variance,0,n_elem,n_elem);
-% fprintf('ROI: %i of %i elements (%.1f%% of prior trace)\n',nnz(roi),n_elem,...
-%     100*sum(prior_variance(roi))/sum(prior_variance));
+Gamma_prior = spdiags(prior_variance,0,n_elem,n_elem);
 
-% We need a smoothness prior here
-
-fprintf('Building smooth prior\n');
-
-str = sprintf("(x-%2.2f).^2+(y-%2.2f).^2+(z-%2.2f).^2<%2.2f^2",...
-    model_parameters.anomaly.position(1),model_parameters.anomaly.position(2),model_parameters.anomaly.position(3),model_parameters.anomaly.radius);
-
-select_fcn = inline(str,'x','y','z');
-idx = elem_select(imgh_recon.fwd_model, select_fcn);
-idx(idx>0) = 1;
-in_block  = idx * idx.';  % both in
-out_block = (~idx) * (~idx).';% both out
-
-% Assemble kappa
-kappa = prior_std_roi * sparse(in_block) + prior_std_background * sparse(out_block);
-
-Gamma_smooth = smooth_prior(imgh_recon,0.5,kappa);
-
-function Gamma = smooth_prior(img, lambda, kappa)
-
-    % Number of elements
-    n_elem = size(img.fwd_model.elems,1);
-    n_nodes = size(img.fwd_model.nodes,1);
-    % centroids = img.
-    % --- Compute squared Euclidean distance matrix efficiently ---
-    % ||x_i - x_j||^2 = ||x_i||^2 + ||x_j||^2 - 2 x_i·x_j
-
-    % Compute centroids
-    nodes = img.fwd_model.nodes; 
-    elems = img.fwd_model.elems;
-
-    % -------------------------------------------------------------
-    % 1) Compute element centroids
-    % -------------------------------------------------------------
-    % Works for triangles (2D) and tetrahedra (3D)
-
-    dim = size(nodes,2);
-    n_vert = size(elems,2);
-
-    centroids = zeros(n_elem, dim);
-    for n = 1:n_vert
-        centroids = centroids + nodes(elems(:,n), :);
-    end
-    centroids = centroids / n_vert;
-
-    % -------------------------------------------------------------
-    % 2) Build smoothness matrix
-    % -------------------------------------------------------------
-
-    if issparse(kappa)
-        % Sparse-efficient version (recommended)
-
-        [i,j,val] = find(kappa);
-
-        xi = centroids(i,:);
-        xj = centroids(j,:);
-
-        D2 = sum((xi - xj).^2, 2);
-
-        weights = val .* exp(-D2/(2*lambda^2));
-
-        Gamma = sparse(i,j,weights,n_elem,n_elem);
-
-    else
-        % Dense version (only for small problems)
-
-        x2 = sum(centroids.^2, 2);
-        D2 = bsxfun(@plus, x2, x2') - 2*(centroids*centroids');
-        D2 = max(D2,0);  % numerical safety
-
-        G = exp(-D2/(2*lambda^2));
-        Gamma = kappa .* G;
-    end
-end
-
-% Gamma_prior = variance_prior_3_axis*Gamma_smooth;
-fprintf('\t Inverting smooth prior (might take a while)\n');
-Gamma_prior = Gamma_smooth;
-Gamma_prior = Gamma_prior + 1e-6 * speye(size(Gamma_prior)); %need regularization because of ill-conditioning
-inv_Gamma_prior = Gamma_prior \ speye(size(Gamma_prior));
-inv_Gamma_prior_3_axis = inv_Gamma_prior;
-
-figure
-img_temp = imgh_recon;
-img_temp.elem_data = diag(Gamma_prior);
-show_fem(img_temp);
-
-drawnow
+fprintf('ROI: %i of %i elements (%.1f%% of prior trace)\n',nnz(roi),n_elem,...
+    100*sum(prior_variance(roi))/sum(prior_variance));
 
 %% Noise covariance (white), calibrated from the whitened Jacobian spectrum
-% The singular values s_i of J0*Gpr^(1/2) measure how strongly the data
-% constrain the prior eigenmodes. Setting the noise std to s(d_target)
-% makes exactly ~d_target modes data-dominated (s_i^2/noise_var > 1).
 imgh_fwd = assign_sensor_locations(imgh_fwd,theta_to_locations(theta_even,rs,zs));
 Bh = fwd_solve_mdeit(imgh_fwd);
 
 imgi_fwd = assign_sensor_locations(imgi_fwd,theta_to_locations(theta_even,rs,zs));
 Bi = fwd_solve_mdeit(imgi_fwd);
 
-% Design uses ONLY the z-channel (Bz) measurements and Jacobian.
-dB_even = Bi.Bz(:) - Bh.Bz(:);
-
+dB_even = Bi.Bz(:) - Bh.Bz(:); %#ok<NASGU>
 max_B = max(abs(Bh.Bz(:)));
 
 % Precompute everything that does NOT depend on the sensor positions
-% (sigma is frozen at the prior mean for the whole optimization): the EIT
-% forward solve u and G*u, the factored CEM operator, the sensor axes and
-% the mesh quadrature geometry. Reused by every cost/gradient evaluation.
 ctx = build_ctx(imgh_recon);
 
 J0 = calc_Jz(ctx,theta_to_locations(theta_even,rs,zs));
-[~,S,Vs] = svd(J0 .* sqrt(prior_variance)','econ');   % unwhitened spectrum
+[~,S,~] = svd(J0 .* sqrt(prior_variance)','econ');   % unwhitened spectrum
 s = diag(S);
 
 noise_std = s(d_target);
@@ -282,290 +148,120 @@ variance_noise = noise_std^2;
 
 n_data = n_stim*n_sensors;                 % z-channel only
 Gamma_noise = (variance_noise)*speye(n_data,n_data);
-inv_Gamma_noise = (1/variance_noise)*speye(n_data,n_data);
 
-d_modes = sum(s.^2/variance_noise > 1);
-roi_energy = mean(sum(Vs(roi,1:d_modes).^2,1));  % ROI alignment of the modes
 fprintf('noise std = %.3e (= max|B|/%.1f)\n',noise_std,max_B/noise_std);
-fprintf('whitened spectrum s_i^2/noise_var: max = %.2e, #>1 = %i of %i data / %i params\n',...
-    s(1)^2/variance_noise,d_modes,n_data,n_elem);
-fprintf('mean ROI energy of the %i data-dominated modes: %.2f (want close to 1)\n',...
-    d_modes,roi_energy);
 
-%% Cost/gradient handles (theta is the only free variable)
-
-costgrad = cell(1,numel(opt_modes));
-for iom = 1:numel(opt_modes)
-    costgrad{iom} = @(theta) costgrad_theta_z(ctx,theta,rs,zs,...
-        Gamma_prior,Gamma_noise,opt_modes{iom},alpha_rep);
-end
-
-%% Optional: finite-difference gradient check
-if do_gradient_check
-    for iom = 1:numel(opt_modes)
-        fprintf('\nGradient check (%s):\n',opt_modes{iom});
-        check_gradient_fd(costgrad{iom},theta_even + 0.1*randn(n_sensors,1),3,1e-4);
-    end
-end
+%% Cost/gradient handle (theta is the only free variable)
+costgrad = @(theta) costgrad_theta_z(ctx,theta,rs,zs,...
+    Gamma_prior,Gamma_noise,opt_mode,alpha_rep);
 
 %% Baseline: evenly spaced sensors
-phi_even = zeros(1,numel(opt_modes));
-for iom = 1:numel(opt_modes)
-    phi_even(iom) = costgrad{iom}(theta_even);
-end
+phi_even = costgrad(theta_even);
+fprintf('\nphi(even spacing) = %.6e\n',phi_even);
 
-%% Optimize with fminunc (quasi-Newton, analytic gradients)
+%% Gradient-based (local) optimization, starting from the even configuration
 options = optimoptions('fminunc',...
     'Algorithm','quasi-newton','SpecifyObjectiveGradient',true,...
     'Display','iter','MaxIterations',max_iterations,...
     'OptimalityTolerance',1e-5,'StepTolerance',1e-8);
 
-theta_opt = cell(1,numel(opt_modes));
-phi_opt = inf(1,numel(opt_modes));
+fprintf('\n=== Gradient-based optimization (fminunc, from even start) ===\n');
+tstart = tic;
+[theta_local,phi_local] = fminunc(costgrad,theta_even,options);
+fprintf('phi(fminunc) = %.6e (%.1f s)\n',phi_local,toc(tstart));
 
-for iom = 1:numel(opt_modes)
-    fprintf('\n=== Optimizing %s (Bz-only MDEIT) ===\n',opt_modes{iom});
+%% Brute-force exhaustive grid search over sensor angles
+% Sensors are unordered -> nchoosek(1:grid_n,n_sensors) combinations
+% (not grid_n^n_sensors permutations) cover every distinct configuration
+% at this grid resolution.
+angle_grid = 2*pi*(0:grid_n-1)/grid_n;
+combos = nchoosek(1:grid_n,n_sensors);
+n_combos = size(combos,1);
 
-    for istart = 1:n_starts
-        if istart == 1
-            th0 = theta_even;
-        else
-            th0 = 2*pi*rand(n_sensors,1);
-        end
+fprintf('\n=== Brute force: %i grid angles (%.1f deg step), %i combinations ===\n',...
+    grid_n,360/grid_n,n_combos);
 
-        tstart = tic;
-        [th,fval] = fminunc(costgrad{iom},th0,options);
-        fprintf('start %i: phi = %.6e (%.1f s)\n',istart,fval,toc(tstart));
-
-        if fval < phi_opt(iom)
-            phi_opt(iom) = fval;
-            theta_opt{iom} = th;
-        end
+phi_grid = inf(n_combos,1);
+tstart = tic;
+for k = 1:n_combos
+    theta_k = angle_grid(combos(k,:))';
+    phi_grid(k) = costgrad(theta_k);   % nargout=1: cost only, no gradient work
+    if mod(k,2000) == 0
+        fprintf('  %i/%i combinations (%.1f s elapsed)\n',k,n_combos,toc(tstart));
     end
 end
+fprintf('Brute force done: %i combinations in %.1f s\n',n_combos,toc(tstart));
 
-%% Report cost reduction
-fprintf('\n================ RESULTS ================\n');
-for iom = 1:numel(opt_modes)
-    fprintf('\n%s:\n',opt_modes{iom});
-    fprintf('  phi(even spacing) = %.6e\n',phi_even(iom));
-    fprintf('  phi(optimized)    = %.6e\n',phi_opt(iom));
-    switch opt_modes{iom}
-        case 'a-opt'
-            fprintf('  trace reduction   = %.1f%%\n',...
-                100*(1 - phi_opt(iom)/phi_even(iom)));
-        case 'd-opt'
-            dnats = phi_even(iom) - phi_opt(iom);
-            fprintf('  extra information = %.2f nats (%.2f bits)\n',...
-                dnats,dnats/log(2));
-    end
-end
+[phi_bf,k_best] = min(phi_grid);
+theta_bf = angle_grid(combos(k_best,:))';
 
-%% Reconstruct with MDEIT for both sensor configurations
+%% Polish the best grid point with a local search (removes grid discretization)
+fprintf('\n=== Local polish of the brute-force optimum ===\n');
+[theta_bf_polished,phi_bf_polished] = fminunc(costgrad,theta_bf,options);
 
-disp('Doing reconstruction')
+%% Report
+fprintf('\n================ BRUTE FORCE vs GRADIENT-BASED RESULTS ================\n');
+fprintf('phi(even spacing)                  = %.6e\n',phi_even);
+fprintf('phi(fminunc, from even start)      = %.6e\n',phi_local);
+fprintf('phi(brute-force grid minimum)      = %.6e  (%.1f deg grid)\n',phi_bf,360/grid_n);
+fprintf('phi(brute-force + local polish)    = %.6e\n',phi_bf_polished);
+fprintf('\ngap: fminunc vs brute-force-polished = %+.3e (%.4f%% of phi_even)\n',...
+    phi_local-phi_bf_polished,100*(phi_local-phi_bf_polished)/phi_even);
 
-img_even = assign_sensor_locations(imgh_recon,theta_to_locations(theta_even,rs,zs));
-img_aopt = assign_sensor_locations(imgh_recon,theta_to_locations(theta_opt{1},rs,zs));
+fprintf('\ntheta_even          (deg) = %s\n',mat2str(mod(theta_even,2*pi)*180/pi,4));
+fprintf('theta_fminunc       (deg) = %s\n',mat2str(mod(theta_local,2*pi)*180/pi,4));
+fprintf('theta_brute_polished(deg) = %s\n',mat2str(mod(theta_bf_polished,2*pi)*180/pi,4));
 
-% Jacobian (z-channel only, shared by cost and gradient)
-J_even = calc_Jz(ctx,theta_to_locations(theta_even,rs,zs));
-J_opt = calc_Jz(ctx,theta_to_locations(theta_opt{1},rs,zs));
+%% Posterior variance comparison (ROI), same metric used in example_anomaly_circle.m
+post_var_even = compute_posterior_variance_diag(ctx,theta_even,rs,zs,Gamma_prior,Gamma_noise);
+post_var_local = compute_posterior_variance_diag(ctx,theta_local,rs,zs,Gamma_prior,Gamma_noise);
+post_var_bf = compute_posterior_variance_diag(ctx,theta_bf_polished,rs,zs,Gamma_prior,Gamma_noise);
 
-% Compute data for optimal config
-imgh_fwd = assign_sensor_locations(imgh_fwd,theta_to_locations(theta_opt{1},rs,zs));
-Bh_opt = fwd_solve_mdeit(imgh_fwd);
-imgi_fwd = assign_sensor_locations(imgi_fwd,theta_to_locations(theta_opt{1},rs,zs));
-Bi_opt = fwd_solve_mdeit(imgi_fwd);
-
-dB_opt = Bi_opt.Bz(:) - Bh_opt.Bz(:);
-
-% Add measurement noise (every channel is a Bz channel now)
-noise_even = sqrt(variance_noise)*randn(size(dB_even));
-dB_even_noisy = dB_even + noise_even;
-
-noise_opt = sqrt(variance_noise)*randn(size(dB_opt));
-dB_opt_noisy = dB_opt + noise_opt;
-
-x0 = background_conductivity*ones(n_elem,1);
-x0(roi) = anomaly_conductivity;
-
-dx0 = x0-background_conductivity*ones(n_elem,1);
-
-%e0 = 0
-posterior_mean_even = x0+Gamma_prior*J_even.'*((J_even*Gamma_prior*J_even.'+Gamma_noise)\(dB_even_noisy-J_even*dx0));
-posterior_mean_opt = x0+Gamma_prior*J_opt.'*((J_opt*Gamma_prior*J_opt.'+Gamma_noise)\(dB_opt_noisy-J_opt*dx0));
-
-%%
-figure
-subplot(1,3,1)
-hold on
-plot(dB_even_noisy)
-plot(dB_even,'r')
-title('Even config')
-legend('noisy','true')
-hold off
-
-subplot(1,3,2)
-hold on
-plot(dB_opt_noisy)
-plot(dB_opt,'r')
-title('Opt config')
-legend('noisy','true')
-hold off
-
-subplot(1,3,3)
-hold on
-plot(dB_opt)
-plot(dB_even)
-legend('opt','even')
-
-% Display SNR for even and opt config
-
-snr_even = 10*log10(rms(dB_even)^2/noise_std^2);
-snr_opt = 10*log10(rms(dB_opt)^2/noise_std^2);
-
-fprintf('SNR (even config) : %2.2g (dB)\n',snr_even)
-fprintf('SNR (opt config) : %2.2g (dB)\n',snr_opt)
-
-img_even.elem_data = posterior_mean_even;
-img_aopt.elem_data = posterior_mean_opt;
-
-figure('Name','Sensor positions');
-subplot(1,3,1);
-show_fem(imgi_fwd);
-
-hold on 
-% Sphere mesh
-[X,Y,Z] = sphere(100);
-
-% Outer surface
-surf(roi_radius*X+anomaly_center(1), roi_radius*Y+anomaly_center(2), roi_radius*Z+anomaly_center(3), ...
-    'FaceColor',[0 0.45 0.74], ...
-    'EdgeColor','none', ...
-    'FaceAlpha',0.3);
-title('Blue sphere is ROI')
-
-box on; grid on; view(3);
-
-subplot(1,3,2)
-show_fem(img_even)
-plot_sensors(img_even,false,'k','o');
-box on; grid on; view(3);
-
-subplot(1,3,3)
-show_fem(img_aopt)
-plot_sensors(img_aopt,false,'g','s');
-box on; grid on; view(3);
-
-close all;
-imgi_fwd.calc_colours.npoints = 512;
-img_even.calc_colours.npoints = 512;
-img_aopt.calc_colours.npoints = 512;
-
-% x = sin(linspace(0,2*pi));
-% y = cos(linspace(0,2*pi));
-% xc = roi_radius*x+anomaly_center(1); 
-% yc = roi_radius*y+anomaly_center(2);
-
-subplot(1,3,1)
-hold on
-show_slices(imgi_fwd,anomaly_center(3)*[inf,inf,1])
-hold off
-subplot(1,3,2)
-show_slices(img_even,anomaly_center(3)*[inf,inf,1])
-subplot(1,3,3)
-show_slices(img_aopt,anomaly_center(3)*[inf,inf,1])
-
-%% Posterior variance diagnostics (prior vs even vs A-optimized)
-post_var_even = compute_posterior_variance_diag(ctx,theta_even,rs,zs,...
-    Gamma_prior,Gamma_noise);
-post_var_aopt = compute_posterior_variance_diag(ctx,theta_opt{1},rs,zs,...
-    Gamma_prior,Gamma_noise);
-
-fprintf('\nPosterior variance sums (ROI | background):\n');
-fprintf('  prior      : %.3e | %.3e\n',sum(prior_variance(roi)),sum(prior_variance(~roi)));
-fprintf('  even       : %.3e | %.3e\n',sum(post_var_even(roi)),sum(post_var_even(~roi)));
-fprintf('  a-optimized: %.3e | %.3e\n',sum(post_var_aopt(roi)),sum(post_var_aopt(~roi)));
-fprintf('  ROI posterior variance: optimized/even = %.3f\n',...
-    sum(post_var_aopt(roi))/sum(post_var_even(roi)));
+fprintf('\nROI posterior variance sums:\n');
+fprintf('  even        : %.4e\n',sum(post_var_even(roi)));
+fprintf('  fminunc     : %.4e  (ratio vs even = %.4f)\n',...
+    sum(post_var_local(roi)),sum(post_var_local(roi))/sum(post_var_even(roi)));
+fprintf('  brute force : %.4e  (ratio vs even = %.4f)\n',...
+    sum(post_var_bf(roi)),sum(post_var_bf(roi))/sum(post_var_even(roi)));
 
 %% Save results
 results = struct();
-results.theta_even = theta_even;
-results.theta_opt = {theta_opt};
-results.opt_modes = {opt_modes};
+results.grid_n = grid_n;
+results.n_combos = n_combos;
 results.phi_even = phi_even;
-results.phi_opt = phi_opt;
-results.post_var_even = post_var_even;
-results.post_var_aopt = post_var_aopt;
-results.prior_variance = prior_variance;
-results.roi = roi;
-results.model_parameters = model_parameters;
-results.noise_std = noise_std;
-save(fullfile(script_folder,'data','example_anomaly_circle_results.mat'),'results');
-
-%% Figures
-figures_folder = fullfile(script_folder,'figures');
-if ~exist(figures_folder,'dir'), mkdir(figures_folder); end
-
-% --- Sensor positions on the FEM model ---
-img_even = assign_sensor_locations(imgh_recon,theta_to_locations(theta_even,rs,zs));
-img_aopt = assign_sensor_locations(imgh_recon,theta_to_locations(theta_opt{1},rs,zs));
-% img_dopt = assign_sensor_locations(imgh_recon,theta_to_locations(theta_opt{2},rs,zs));
-
-figure('Name','Sensor positions');
-hold on
-show_fem(imgi_fwd);
-plot_sensors(img_even,false,'k','o');
-plot_sensors(img_aopt,false,'g','s');
-% h = plot_sensors(img_dopt,false,'r','d');
-hold off
-axis([-1.1*rs 1.1*rs -1.1*rs 1.1*rs 0 model_parameters.height])
-box on; grid on; view(3);
-title('black o: even | green s: a-opt | red d: d-opt');
-savefig(fullfile(figures_folder,'example_anomaly_circle_sensors.fig'));
-saveas(gcf,fullfile(figures_folder,'example_anomaly_circle_sensors.png'));
-
-try
-    figure('Name','Sensor angles');
-    polarplot(theta_even,ones(n_sensors,1),'ko','DisplayName','even'); hold on
-    try polarplot(mod(theta_opt{1},2*pi),1*ones(n_sensors,1),'gs','DisplayName','a-opt'); end
-    try polarplot(mod(theta_opt{2},2*pi),1*ones(n_sensors,1),'rd','DisplayName','d-opt'); end
-    polarplot([0 0],[0 1.2],'b-','DisplayName','anomaly azimuth');
-    legend show
-    title('Sensor azimuths (anomaly at azimuth 0)');
-    savefig(fullfile(figures_folder,'example_anomaly_circle_angles.fig'));
-    saveas(gcf,fullfile(figures_folder,'example_anomaly_circle_angles.png'));
-catch err
-    fprintf('WARNING: angle figure failed: %s\n',err.message);
-end
-
-% --- Posterior std at the mid-height slice ---
-try
-    slice = abs(fmdl_recon.elem_centroids(:,3)-zs) < model_parameters.maxsz;
-    xc = fmdl_recon.elem_centroids(slice,1);
-    yc = fmdl_recon.elem_centroids(slice,2);
-    cmax = sqrt(max(prior_variance(slice)));
-
-    figure('Name','Posterior std, mid slice','Position',[100 100 1200 400]);
-    vals = {sqrt(prior_variance(slice)),sqrt(post_var_even(slice)),sqrt(post_var_aopt(slice))};
-    names = {'prior','posterior (even)','posterior (a-opt)'};
-    for ip = 1:3
-        subplot(1,3,ip);
-        scatter(xc,yc,25,vals{ip},'filled');
-        axis equal tight; colorbar; clim([0 cmax]);
-        title(names{ip}); xlabel('x'); ylabel('y');
-    end
-    savefig(fullfile(figures_folder,'example_anomaly_circle_posterior.fig'));
-    saveas(gcf,fullfile(figures_folder,'example_anomaly_circle_posterior.png'));
-catch err
-    fprintf('WARNING: posterior figure failed: %s\n',err.message);
-end
+results.phi_local = phi_local;
+results.phi_bf = phi_bf;
+results.phi_bf_polished = phi_bf_polished;
+results.theta_even = theta_even;
+results.theta_local = theta_local;
+results.theta_bf = theta_bf;
+results.theta_bf_polished = theta_bf_polished;
+results.phi_grid = phi_grid;
+results.combos = combos;
+results.angle_grid = angle_grid;
+save(fullfile(script_folder,'data','brute_force_4x4_results.mat'),'results');
 
 fprintf('\nDone.\n');
 
+%% 
+
+imgr = imgh_recon;
+imgr.elem_data = diag(Gamma_prior);
+
+show_fem(imgr)
+plot_sensors(imgr)
+
+figure
+polarplot(theta_even,ones(n_sensors,1),'bx','DisplayName','even'); hold on
+polarplot(theta_bf_polished,ones(n_sensors,1),'ro','DisplayName','even'); hold on
+polarplot(theta_opt{1},ones(n_sensors,1),'gs','DisplayName','even'); hold on
+
+legend('Even','Brute-Force','Optimized')
+
 %% ======================== LOCAL FUNCTIONS ========================
+% (identical to example_anomaly_circle.m -- kept self-contained here so
+% this script does not depend on that file's local functions, which are
+% not exported.)
 
 %% Map circle angles to 3D sensor locations
 function sensor_locations = theta_to_locations(theta,rs,zs)
@@ -574,9 +270,6 @@ sensor_locations = [rs*cos(theta), rs*sin(theta), zs*ones(numel(theta),1)];
 end
 
 %% Cost and gradient in the angle parametrization (Bz-only MDEIT)
-% Uses the precomputed context CTX (see build_ctx): sigma is frozen at the
-% prior mean, so the EIT forward solve, the factored CEM operator and the
-% mesh geometry are all loop invariants and are never recomputed here.
 function [phi,dphi] = costgrad_theta_z(ctx,theta,rs,zs,Gamma_prior,Gamma_noise,opt_mode,alpha_rep)
 assert(ismember(opt_mode,{'a-opt','d-opt'}));
 
@@ -597,9 +290,6 @@ switch opt_mode
     case 'a-opt'
         phi_data = sum(d) - sum(sum(P .* Y));          % trace(H^-1)
     case 'd-opt'
-        % -logdet(H) = logdet(Gn) + logdet(Gpr) - logdet(S).  The first two
-        % terms are theta-independent constants; kept so the reported
-        % "nats" stay comparable across configs.
         logdet_S = 2*sum(log(diag(Ls)));
         phi_data = sum(log(diag(Gamma_noise))) ...
                  - sum(log(d)) - logdet_S;
@@ -621,7 +311,6 @@ end
 
 % ---- Gradient ----
 % dphi = -2*<W, dJ/dp>_F  with  W_A = Gn^-1*J*H^-2,  W_D = Gn^-1*J*H^-1.
-% Both come from the same data-space objects P, Y (no n x n matrix).
 switch opt_mode
     case 'a-opt'
         Yd = Y .* d.';               % Y*Gpr   [nd x n]
@@ -638,7 +327,6 @@ dphi_data = -rs*sin(theta(:)).*dphidp(1,:)' + rs*cos(theta(:)).*dphidp(2,:)';
 if alpha_rep > 0
     [dGx,dGy,~] = repulsion_grad_cartesian(sensor_locations);
     dGrep = -rs*sin(theta(:)).*dGx + rs*cos(theta(:)).*dGy;
-    % d/dtheta [ phi_data*(1 + alpha_rep*Grep) ]
     dphi = dphi_data*(1 + alpha_rep*Grep) + phi_data*alpha_rep*dGrep;
 else
     dphi = dphi_data;
@@ -667,8 +355,6 @@ ctx.GzU = ctx.G.Gz*ctx.u;
 
 % Factor the CEM Schur-complement operator ONCE. It is SPD up to a 1-D
 % constant null space (the floating potential): ground the last node.
-% Every downstream use multiplies the solution by a gradient operator
-% (G.G*), which annihilates constants, so grounding is exact for J.
 Amat = M(img,ctx.sigma);
 Amat = (Amat + Amat.')/2;             % remove roundoff asymmetry for LDL
 ctx.free = 1:size(Amat,1)-1;
@@ -685,7 +371,6 @@ X(ctx.free,:) = ctx.Afac \ RHS(ctx.free,:);
 end
 
 %% z-channel Jacobian dBz/dsigma (adjoint method), sigma frozen via CTX
-% Assumes identity sensor axes (z measurement axis = e_z), as in this study.
 function J = calc_Jz(ctx,sensor_locations)
 G = ctx.G;  n_elem = ctx.n_elem;  num_stim = ctx.num_stim;
 numSensors = size(sensor_locations,1);
@@ -734,7 +419,6 @@ dRx = compute_dR(ctx,sensor_locations,1);
 
 dphidp = zeros(3,numSensors);
 for p = 1:3
-    % adjoint-derivative source (all sensors), then a single block solve
     rhs = mu*( (dRy{p}.*sigma.')*G.Gx - (dRx{p}.*sigma.')*G.Gy );  % [nS x n_nodes]
     dlambda = ctx_solve(ctx,rhs.');               % [n_nodes x numSensors]
     dlGx = G.Gx*dlambda;                          % [n_elem x numSensors]
@@ -743,10 +427,8 @@ for p = 1:3
     for m = 1:numSensors
         ids = m:numSensors:block_size;
         Wm  = W(ids,:);                           % [num_stim x n_elem]
-        % dJ1: contribution from dlambda/dp
         tmp = dlGx(:,m).*GxU + dlGy(:,m).*GyU + dlGz(:,m).*GzU;   % [n_elem x num_stim]
         dJ1 = tmp.' .* elemV;                     % [num_stim x n_elem]
-        % dJ2: contribution from dR/dp (z measurement axis)
         dJ2 = -mu*( dRx{p}(m,:).*GyU.' - dRy{p}(m,:).*GxU.' );    % [num_stim x n_elem]
         dphidp(p,m) = -2*sum(sum(Wm.*(dJ1 - dJ2)));
     end
@@ -834,6 +516,7 @@ xi = reshape(v1',[3,1,numElements]) + ...
     Jm(:,3,:).*reshape(coord(:,3),[1,numQuadPts,1]);
 xi = permute(xi,[2 1 3]);                        % numQuadPts x 3 x numElements
 end
+
 %% Diagonal of the posterior covariance for a given configuration (z-only)
 function post_var = compute_posterior_variance_diag(ctx,theta,rs,zs,...
     Gamma_prior,Gamma_noise)
@@ -844,22 +527,6 @@ P = J*Gamma_prior;                          % [nd x n]
 S = Gamma_noise + P*J.';                     % [nd x nd]
 Y = S \ P;                                   % S^-1 P
 post_var = diag(Gamma_prior) - sum(P.*Y,1)'; % diag(H^-1)
-end
-
-%% Finite-difference gradient check (central differences)
-function check_gradient_fd(costgrad,theta0,n_check,h)
-n = numel(theta0);
-[~,g] = costgrad(theta0);
-idx = randperm(n,min(n_check,n));
-for i = idx
-    e = zeros(n,1); e(i) = 1;
-    fp = costgrad(theta0 + h*e);
-    fm = costgrad(theta0 - h*e);
-    g_fd = (fp - fm)/(2*h);
-    rel_err = abs(g(i)-g_fd)/max(abs(g_fd),eps);
-    fprintf('  dphi/dtheta(%i): analytic = %+.6e | FD = %+.6e | rel err = %.2e\n',...
-        i,g(i),g_fd,rel_err);
-end
 end
 
 %% Schur complement of the CEM system matrix (SPD up to a constant null space)
@@ -893,7 +560,6 @@ v3 = squeeze(V(3,:,:)); v4 = squeeze(V(4,:,:));
 a = v2-v1; b = v3-v1; c = v4-v1;
 detJ = abs(sum(a .* cross(b,c,2),2))';   % 1 x numElements
 
-% Quadrature points in all elements: numQuadPts x 3 x numElements
 Jm = zeros(3,3,numElements);
 Jm(:,1,:) = permute(a,[2 3 1]);
 Jm(:,2,:) = permute(b,[2 3 1]);
